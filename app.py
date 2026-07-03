@@ -2342,6 +2342,162 @@ def score_llm_query(ok, result_df, sql, explanation, elapsed, columns):
     return min(int(score), 100), detail
 
 
+
+def _find_cols_by_keywords(columns, keywords):
+    hits = []
+    for c in columns:
+        s = str(c).lower()
+        if any(k.lower() in s for k in keywords):
+            hits.append(c)
+    return hits
+
+
+def infer_question_caliber(question, sql, result_df, df, meta):
+    """根据用户问题、SQL和当前字段生成问数口径说明。"""
+    q = str(question or "")
+    cols = list(df.columns)
+    rows = []
+
+    used_cols = []
+    for c in cols:
+        if f'"{c}"' in str(sql) or f'`{c}`' in str(sql) or re.search(rf'(?<![\w\u4e00-\u9fff]){re.escape(str(c))}(?![\w\u4e00-\u9fff])', str(sql), flags=re.I):
+            used_cols.append(c)
+
+    metric_guess = ""
+    if any(k in q for k in ["销售量", "销量", "销售数量", "数量最高", "数量最多"]):
+        cand = _find_cols_by_keywords(cols, ["数量", "qty", "quantity", "count"])
+        metric_guess = f"销售量/销量 → 优先理解为“{cand[0]}”的合计" if cand else "销售量/销量 → 当前数据中未明显识别到数量类字段，需结合SQL核对"
+    elif any(k in q for k in ["销售额", "收入", "金额", "利润", "成本", "费用"]):
+        cand = [c for c in cols if any(k in str(c) for k in ["销售", "收入", "金额", "利润", "成本", "费用"])]
+        metric_guess = f"经营指标 → 优先匹配为“{cand[0]}”等金额/利润类字段" if cand else "经营指标 → 按SQL中使用的数值字段解释"
+    elif used_cols:
+        metric_guess = f"经营指标 → SQL中实际使用字段：{', '.join(map(str, used_cols[:4]))}"
+    else:
+        metric_guess = "经营指标 → 按大模型生成SQL中的字段执行"
+
+    if any(k in q for k in ["产品", "商品", "sku", "SKU"]):
+        prod_cols = _find_cols_by_keywords(cols, ["产品", "商品", "sku", "SKU"])
+        obj_guess = f"产品/商品 → 优先匹配为“{prod_cols[0]}”" if prod_cols else "产品/商品 → 当前数据未明显识别到产品字段，需检查SQL分组字段"
+    elif any(k in q for k in ["客户", "地区", "部门", "类别", "类型", "渠道"]):
+        dim_hits = [c for c in cols if any(k in str(c) for k in ["客户", "地区", "部门", "类别", "类型", "渠道"])]
+        obj_guess = f"分析对象 → 优先匹配为“{dim_hits[0]}”等维度字段" if dim_hits else "分析对象 → 按SQL中的GROUP BY字段解释"
+    else:
+        obj_guess = "分析对象 → 按SQL中的分组字段或筛选条件确定"
+
+    if any(k in q.lower() for k in ["最高", "最大", "最多", "top", "前10", "前十", "排名"]):
+        sort_guess = "排序方式 → 按目标指标降序排序，返回排名靠前结果"
+    elif any(k in q for k in ["最低", "最小", "最少"]):
+        sort_guess = "排序方式 → 按目标指标升序排序，返回排名靠前结果"
+    else:
+        sort_guess = "排序方式 → 未明显指定排名，按SQL生成逻辑执行"
+
+    rows.append({"解析项": "指标口径", "系统理解": metric_guess})
+    rows.append({"解析项": "分析对象", "系统理解": obj_guess})
+    rows.append({"解析项": "排序/筛选", "系统理解": sort_guess})
+    rows.append({"解析项": "查询范围", "系统理解": "当前上传并清洗后的数据表 data"})
+    if used_cols:
+        rows.append({"解析项": "SQL实际字段", "系统理解": "、".join(map(str, used_cols[:8]))})
+    return pd.DataFrame(rows)
+
+
+def build_query_validation(pack, question, df):
+    sql = str(pack.get("SQL", ""))
+    result = pack.get("结果", pd.DataFrame())
+    ok = bool(pack.get("是否成功", False))
+    used_cols = []
+    for c in df.columns:
+        if f'"{c}"' in sql or f'`{c}`' in sql or re.search(rf'(?<![\w\u4e00-\u9fff]){re.escape(str(c))}(?![\w\u4e00-\u9fff])', sql, flags=re.I):
+            used_cols.append(c)
+
+    agg = []
+    low_sql = sql.lower()
+    if "sum(" in low_sql:
+        agg.append("包含 SUM 求和聚合")
+    if "avg(" in low_sql or "mean(" in low_sql:
+        agg.append("包含 AVG 均值聚合")
+    if "count(" in low_sql:
+        agg.append("包含 COUNT 计数")
+    if "group by" in low_sql:
+        agg.append("包含 GROUP BY 分组")
+    if "order by" in low_sql:
+        agg.append("包含 ORDER BY 排序")
+
+    rows = [
+        {"校验项": "SQL可执行性", "校验结果": "通过" if ok else "未通过"},
+        {"校验项": "字段匹配", "校验结果": "、".join(map(str, used_cols)) if used_cols else "未识别到明确字段匹配，需人工复核"},
+        {"校验项": "聚合/排序逻辑", "校验结果": "；".join(agg) if agg else "未识别到明显聚合或排序逻辑"},
+        {"校验项": "结果有效性", "校验结果": f"返回 {len(result)} 行结果" if isinstance(result, pd.DataFrame) else "无结果表"},
+        {"校验项": "可信度提示", "校验结果": "结果来自SQL执行；若问题口径存在歧义，请优先核对指标口径和分组字段"}
+    ]
+    return pd.DataFrame(rows)
+
+
+def extract_direct_answer_from_explanation(explanation):
+    text = clean_md_inline(explanation)
+    if not text:
+        return "模型已返回查询结果，但未生成直接回答。请结合SQL结果表进行判断。"
+    # 优先提取“直接回答/查询结论”后的内容
+    m = re.search(r"(?:直接回答|查询结论|结论)[:：]\s*(.*?)(?:经营含义|后续建议|建议[:：]|$)", text, flags=re.S)
+    if m:
+        ans = m.group(1).strip(" ：；。")
+        if ans:
+            return ans[:260] + ("..." if len(ans) > 260 else "")
+    # 兜底取第一句
+    parts = re.split(r"[。；\n]", text)
+    for p in parts:
+        p = p.strip()
+        if len(p) >= 8:
+            return p[:260] + ("..." if len(p) > 260 else "")
+    return text[:260] + ("..." if len(text) > 260 else "")
+
+
+def render_llm_query_pack(pack, question, df, meta):
+    """问数结果可信度闭环展示。"""
+    provider = pack.get("模型", "")
+    st.markdown(f"## {provider}")
+
+    if pack.get("是否成功"):
+        direct = pack.get("直接回答") or extract_direct_answer_from_explanation(pack.get("解释", ""))
+        st.markdown(f"""
+        <div class="section-card">
+            <h3>AI直接回答</h3>
+            <p class="small-text">{direct}</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("#### 问题解析口径")
+        caliber_df = pack.get("问题解析口径")
+        if not isinstance(caliber_df, pd.DataFrame):
+            caliber_df = infer_question_caliber(question, pack.get("SQL", ""), pack.get("结果", pd.DataFrame()), df, meta)
+        st.dataframe(caliber_df, use_container_width=True, hide_index=True)
+
+        st.markdown("#### SQL 查询语句")
+        st.code(pack.get("SQL", ""), language="sql")
+
+        st.success(f"执行成功｜响应时间：{pack.get('响应时间', np.nan):.2f}秒｜综合评分：{pack.get('综合评分', 0)}")
+        st.markdown("#### 数据库执行结果")
+        st.dataframe(pack.get("结果", pd.DataFrame()), use_container_width=True)
+
+        st.markdown("#### 结果解释")
+        st.info(pack.get("解释", ""))
+
+        st.markdown("#### 系统校验与评分")
+        validation_df = pack.get("系统校验")
+        if not isinstance(validation_df, pd.DataFrame):
+            validation_df = build_query_validation(pack, question, df)
+        st.dataframe(validation_df, use_container_width=True, hide_index=True)
+
+        with st.expander("查看评分明细"):
+            st.json(pack.get("评分明细", {}))
+    else:
+        if pack.get("SQL"):
+            st.markdown("#### SQL 查询语句")
+            st.code(pack.get("SQL", ""), language="sql")
+        st.error(f"执行失败：{pack.get('错误信息', '')}")
+        with st.expander("查看评分明细"):
+            st.json(pack.get("评分明细", {}))
+
+
 def run_llm_sql_question(provider, question, df, meta):
     sql_df = to_sqlite_df(df)
     con = sqlite3.connect(":memory:")
@@ -2357,16 +2513,26 @@ def run_llm_sql_question(provider, question, df, meta):
 4. 字段名必须严格来自字段信息，中文或特殊字段名请使用双引号；
 5. 尽量使用 LIMIT 20 控制输出；
 6. 若问题涉及排名、最高、最低，请使用 ORDER BY；
-7. 若问题涉及分组统计，请使用 GROUP BY。
+7. 若问题涉及分组统计，请使用 GROUP BY；
+8. 若问题涉及“销售量/销量/销售数量”，优先寻找数量类字段并对其求和；
+9. 若问题涉及“产品/商品/SKU”，优先寻找产品、商品、SKU相关字段作为分组对象。
 """
-    user_prompt = f"字段信息：\n{schema}\n\n用户问题：{question}\n\n请生成 SQLite SELECT 查询语句。"
+    user_prompt = f"""字段信息：
+{schema}
+
+用户问题：{question}
+
+请生成 SQLite SELECT 查询语句。"""
     content, elapsed = call_llm(provider, system_prompt, user_prompt, temperature=0)
     sql = extract_sql(content)
 
     safe, reason = is_safe_select_sql(sql)
     if not safe:
         score, detail = score_llm_query(False, pd.DataFrame(), sql, "", elapsed, sql_df.columns)
-        return {"模型": provider, "SQL": sql, "是否成功": False, "错误信息": reason, "结果": pd.DataFrame(), "解释": "", "响应时间": elapsed, "综合评分": score, "评分明细": detail}
+        pack = {"模型": provider, "SQL": sql, "是否成功": False, "错误信息": reason, "结果": pd.DataFrame(), "解释": "", "直接回答": "", "响应时间": elapsed, "综合评分": score, "评分明细": detail}
+        pack["问题解析口径"] = infer_question_caliber(question, sql, pd.DataFrame(), df, meta)
+        pack["系统校验"] = build_query_validation(pack, question, df)
+        return pack
 
     try:
         result = pd.read_sql_query(sql, con)
@@ -2376,17 +2542,32 @@ def run_llm_sql_question(provider, question, df, meta):
         ok, error = False, str(e)
 
     explanation = ""
+    direct_answer = ""
     if ok:
         try:
-            exp_system = "你是一名经营数据分析顾问。请根据查询结果，用中文简洁解释结论、经营含义和建议。"
-            exp_user = f"用户问题：{question}\nSQL：{sql}\n查询结果：\n{result.head(20).to_markdown(index=False)}\n\n请输出：1. 查询结论；2. 经营含义；3. 后续建议。"
+            exp_system = "你是一名经营数据分析顾问。请根据SQL查询结果，先直接回答用户问题，再解释经营含义和后续建议。回答必须基于查询结果，不得编造结果表中不存在的字段或数值。"
+            result_text = result.head(20).to_markdown(index=False)
+            exp_user = f"""用户问题：{question}
+SQL：{sql}
+查询结果：
+{result_text}
+
+请按以下格式输出：
+直接回答：...
+结果解释：...
+经营含义：...
+后续建议：..."""
             explanation, _ = call_llm(provider, exp_system, exp_user, temperature=0.2)
+            direct_answer = extract_direct_answer_from_explanation(explanation)
         except Exception as e:
             explanation = f"SQL 已执行成功，但结果解释生成失败：{e}"
+            direct_answer = "SQL 已执行成功，请以数据库执行结果表为准。"
 
     score, detail = score_llm_query(ok, result, sql, explanation, elapsed, sql_df.columns)
-    return {"模型": provider, "SQL": sql, "是否成功": ok, "错误信息": error, "结果": result, "解释": explanation, "响应时间": elapsed, "综合评分": score, "评分明细": detail}
-
+    pack = {"模型": provider, "SQL": sql, "是否成功": ok, "错误信息": error, "结果": result, "解释": explanation, "直接回答": direct_answer, "响应时间": elapsed, "综合评分": score, "评分明细": detail}
+    pack["问题解析口径"] = infer_question_caliber(question, sql, result, df, meta)
+    pack["系统校验"] = build_query_validation(pack, question, df)
+    return pack
 
 def generate_dynamic_questions(main_metric, dimensions, numeric_cols, date_col):
     qs = []
@@ -2770,25 +2951,64 @@ def generate_report_docx(df, main_metric, dimensions, date_col, anomaly_df, focu
 
 
 # ============================================================
-# 页面入口与数据初始化
+# 页面入口、功能导航与数据初始化
 # ============================================================
 
 st.markdown("""
 <div class="hero">
     <h1>智策经营——AI 驱动的多维经营分析与决策支持系统</h1>
-    <p>上传经营数据后，系统将自动完成数据治理、经营态势分析、多维经营洞察、风险识别、自然语言问数与管理层决策简报生成。</p>
+    <p>先理解字段，再自适应分析：系统基于上传数据自动完成字段解释、经营态势、经营洞察、异常诊断、问数助手与管理层简报生成。</p>
 </div>
 """, unsafe_allow_html=True)
 
+st.sidebar.markdown("## 🧭 功能导航")
+st.sidebar.markdown("""
+- 🧩 **数据治理**：字段识别、质量评估、字段资产地图  
+- 🏠 **经营态势**：核心指标、趋势演示、风险摘要  
+- 📊 **经营洞察**：维度对比、贡献度、指标关系、热力图  
+- ⚠️ **风险识别**：异常检测、风险评分、AI解释  
+- 💬 **问数助手**：自然语言问数、SQL校验、模型对比  
+- 📝 **决策简报**：自动生成管理层经营分析 Word 报告  
+""")
+
+st.sidebar.markdown("---")
 st.sidebar.markdown("## 📂 数据上传")
-st.sidebar.markdown("请上传 xlsx、xls 或 csv 格式的经营数据。")
+st.sidebar.markdown("支持 Excel / CSV，系统会根据上传数据动态识别字段和分析口径。")
 uploaded_file = st.sidebar.file_uploader(
     "上传经营数据文件",
     type=["xlsx", "xls", "csv"]
 )
 
 if uploaded_file is None:
-    st.info("请先在左侧上传经营数据文件。系统会根据上传数据自动识别主指标、维度字段和时间字段。")
+    st.markdown("### 使用流程")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown("""
+        <div class="section-card">
+            <h3>① 上传数据</h3>
+            <p class="small-text">上传 Excel 或 CSV 经营数据，系统自动识别金额、数量、时间、维度、ID、比例等字段角色。</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with c2:
+        st.markdown("""
+        <div class="section-card">
+            <h3>② 智能分析</h3>
+            <p class="small-text">围绕主指标生成经营态势、多维洞察、异常风险识别，并解释“为什么异常、哪里值得关注”。</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with c3:
+        st.markdown("""
+        <div class="section-card">
+            <h3>③ 问数与简报</h3>
+            <p class="small-text">支持自然语言问数、SQL执行校验、模型对比，并自动生成管理层经营分析 Word 简报。</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <div class="tip-card">
+    <b>开始使用：</b>请在左侧上传经营数据文件。上传后，系统会自动进入数据治理、经营态势、经营洞察、风险识别、问数助手和决策简报模块。
+    </div>
+    """, unsafe_allow_html=True)
     st.stop()
 
 try:
@@ -2824,7 +3044,7 @@ metric_candidates = get_metric_candidates(meta)
 dimension_candidates = get_dimension_candidates(meta)
 date_candidates = get_date_candidates(meta)
 
-# 兜底：如果规则没有识别出主指标，则尝试从全表中寻找可解析数值字段
+# 兜底：如果规则未识别到主指标，则从全表中寻找可解析数值字段
 if not metric_candidates:
     for c in raw_df.columns:
         if is_id_like(c):
@@ -2838,7 +3058,7 @@ if not metric_candidates:
     st.stop()
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### ⚙️ 字段配置")
+st.sidebar.markdown("## ⚙️ 字段配置")
 
 main_metric = st.sidebar.selectbox("主分析指标", options=metric_candidates, index=0)
 date_choice = st.sidebar.selectbox("日期字段", options=["无"] + date_candidates, index=0)
@@ -2861,11 +3081,10 @@ missing_strategy = st.sidebar.selectbox(
     index=0
 )
 
-# 确保主指标一定参与数值转换
 if main_metric not in selected_numeric_cols:
     selected_numeric_cols = [main_metric] + selected_numeric_cols
 
-# 清洗与数值转换必须放在所有页面渲染之前，否则 clean_summary/numeric_report 等变量会未定义
+# 所有页面渲染前必须完成初始化，否则 clean_summary / numeric_report / anomaly_df 等变量会未定义
 df, quality_report, clean_summary, numeric_report = clean_data(
     raw_df,
     selected_numeric_cols,
@@ -3551,19 +3770,24 @@ with tab4:
 
 with tab5:
     st.subheader("💬 问数助手")
-    st.markdown("用户可输入任意与当前数据相关的问题，系统会调用所选大模型生成 SQL、执行查询，并返回结果解释。")
+    st.markdown("""
+    <div class="tip-card">
+    用户可以输入与当前数据相关的问题。系统会调用所选大模型生成 SQL，并在数据库中执行查询；同时展示
+    <b>AI直接回答、问题解析口径、SQL语句、执行结果、系统校验和评分明细</b>，用于降低字段误解和模型幻觉风险。
+    </div>
+    """, unsafe_allow_html=True)
 
     with st.expander("查看问数任务综合评分规则"):
         st.markdown("""
         **问数任务综合评分**用于比较不同大模型在本轮数据问数任务中的表现，不等同于严格人工标注准确率。评分规则如下：
 
-        1. **SQL可执行性（40分）**：生成的SQL必须是安全的 `SELECT` 查询，并且能在当前上传数据表上成功运行；若字段名错误、语法错误或生成非查询语句，则该项为0分。
-        2. **查询结果有效性（20分）**：SQL成功执行且返回非空结果，通常给20分；如果成功执行但结果为空，说明查询条件或理解可能有偏差，通常只给8分。
-        3. **字段匹配度（15分）**：系统会检查SQL是否使用了当前数据中的真实字段。使用了相关字段通常给15分；虽然可执行但字段使用较弱时会降分。
-        4. **结果解释质量（15分）**：模型需要基于查询结果给出清晰的经营解释，包括结论、含义和建议；解释过短或缺失会扣分。
-        5. **响应速度（10分）**：响应时间≤3秒为10分；3—8秒为8分；8—15秒为5分；超过15秒为2分；调用失败为0分。
+        1. **SQL可执行性（40分）**：生成的SQL必须是安全的 `SELECT` 查询，并且能在当前上传数据表上成功运行；若字段名错误、语法错误或生成非查询语句，则该项为0分。  
+        2. **查询结果有效性（20分）**：SQL成功执行且返回非空结果，通常给20分；如果成功执行但结果为空，说明查询条件或理解可能有偏差，通常只给8分。  
+        3. **字段匹配度（15分）**：系统会检查SQL是否使用了当前数据中的真实字段。使用了相关字段通常给15分；虽然可执行但字段使用较弱时会降分。  
+        4. **结果解释质量（15分）**：模型需要基于查询结果给出清晰的经营解释，包括结论、含义和建议；解释过短或缺失会扣分。  
+        5. **响应速度（10分）**：响应时间≤3秒为10分；3—8秒为8分；8—15秒为5分；超过15秒为2分；调用失败为0分。  
 
-        因此，分数越高表示本轮问数结果越“可用”，但它不是严格人工标注准确率。
+        分数越高表示本轮问数结果越“可用”。但由于自然语言问题可能存在口径歧义，用户仍应结合“问题解析口径”和“SQL查询结果”进行复核。
         """)
 
     st.markdown("### 💡 你可以这样问")
@@ -3592,25 +3816,15 @@ with tab5:
             st.warning("请至少选择一个大模型。")
         else:
             for provider in selected_providers:
-                st.markdown(f"## {provider}")
-                with st.spinner(f"{provider} 正在生成 SQL 并查询..."):
+                with st.spinner(f"{provider} 正在生成 SQL、执行查询并生成可信度说明..."):
                     try:
                         pack = run_llm_sql_question(provider, question, df, meta)
                     except Exception as e:
-                        pack = {"模型": provider, "SQL": "", "是否成功": False, "错误信息": str(e), "结果": pd.DataFrame(), "解释": "", "响应时间": np.nan, "综合评分": 0, "评分明细": {}}
+                        pack = {"模型": provider, "SQL": "", "是否成功": False, "错误信息": str(e), "结果": pd.DataFrame(), "解释": "", "直接回答": "", "响应时间": np.nan, "综合评分": 0, "评分明细": {}}
+                        pack["问题解析口径"] = infer_question_caliber(question, "", pd.DataFrame(), df, meta)
+                        pack["系统校验"] = build_query_validation(pack, question, df)
 
-                if pack["SQL"]:
-                    st.code(pack["SQL"], language="sql")
-                if pack["是否成功"]:
-                    st.success(f"执行成功｜响应时间：{pack['响应时间']:.2f}秒｜综合评分：{pack['综合评分']}")
-                    st.dataframe(pack["结果"], use_container_width=True)
-                    st.markdown("#### 模型解释")
-                    st.info(pack["解释"])
-                else:
-                    st.error(f"执行失败：{pack['错误信息']}")
-
-                with st.expander("查看评分明细"):
-                    st.json(pack["评分明细"])
+                render_llm_query_pack(pack, question, df, meta)
 
                 st.session_state["llm_records"].append({
                     "模型": provider,
