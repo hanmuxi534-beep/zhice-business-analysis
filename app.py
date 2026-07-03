@@ -2768,6 +2768,135 @@ def generate_report_docx(df, main_metric, dimensions, date_col, anomaly_df, focu
     bio.seek(0)
     return bio
 
+
+# ============================================================
+# 页面入口与数据初始化
+# ============================================================
+
+st.markdown("""
+<div class="hero">
+    <h1>智策经营——AI 驱动的多维经营分析与决策支持系统</h1>
+    <p>上传经营数据后，系统将自动完成数据治理、经营态势分析、多维经营洞察、风险识别、自然语言问数与管理层决策简报生成。</p>
+</div>
+""", unsafe_allow_html=True)
+
+st.sidebar.markdown("## 📂 数据上传")
+st.sidebar.markdown("请上传 xlsx、xls 或 csv 格式的经营数据。")
+uploaded_file = st.sidebar.file_uploader(
+    "上传经营数据文件",
+    type=["xlsx", "xls", "csv"]
+)
+
+if uploaded_file is None:
+    st.info("请先在左侧上传经营数据文件。系统会根据上传数据自动识别主指标、维度字段和时间字段。")
+    st.stop()
+
+try:
+    raw_df = read_uploaded_file(uploaded_file)
+except Exception as e:
+    st.error(f"文件读取失败：{e}")
+    st.stop()
+
+if raw_df is None or raw_df.empty:
+    st.error("上传文件为空，无法开展经营分析。")
+    st.stop()
+
+# 标准化字段名，避免空格、特殊符号导致 SQL 或图表报错
+raw_df = raw_df.copy()
+normalized_cols = []
+used_cols = set()
+for idx, col in enumerate(raw_df.columns):
+    new_col = normalize_column_name(col)
+    if not new_col:
+        new_col = f"字段{idx + 1}"
+    base = new_col
+    k = 1
+    while new_col in used_cols:
+        k += 1
+        new_col = f"{base}_{k}"
+    used_cols.add(new_col)
+    normalized_cols.append(new_col)
+raw_df.columns = normalized_cols
+
+# 字段语义识别
+meta = infer_field_metadata(raw_df)
+metric_candidates = get_metric_candidates(meta)
+dimension_candidates = get_dimension_candidates(meta)
+date_candidates = get_date_candidates(meta)
+
+# 兜底：如果规则没有识别出主指标，则尝试从全表中寻找可解析数值字段
+if not metric_candidates:
+    for c in raw_df.columns:
+        if is_id_like(c):
+            continue
+        s = parse_numeric_series(raw_df[c], aggressive=True)
+        if s.notna().sum() > 0:
+            metric_candidates.append(c)
+
+if not metric_candidates:
+    st.error("当前数据中未识别到可用于分析的数值指标。请检查文件中是否包含金额、数量、成本、利润、收入等数值字段。")
+    st.stop()
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### ⚙️ 字段配置")
+
+main_metric = st.sidebar.selectbox("主分析指标", options=metric_candidates, index=0)
+date_choice = st.sidebar.selectbox("日期字段", options=["无"] + date_candidates, index=0)
+date_col = None if date_choice == "无" else date_choice
+
+default_nums = list(dict.fromkeys([main_metric] + [c for c in metric_candidates if c != main_metric][:4]))
+selected_numeric_cols = st.sidebar.multiselect(
+    "参与分析的数值字段",
+    options=metric_candidates,
+    default=default_nums
+)
+selected_dimensions = st.sidebar.multiselect(
+    "分析维度字段",
+    options=dimension_candidates,
+    default=dimension_candidates[:3]
+)
+missing_strategy = st.sidebar.selectbox(
+    "缺失值处理策略",
+    options=["保留并在分析时忽略", "删除主指标缺失行", "数值中位数填充，类别填未知"],
+    index=0
+)
+
+# 确保主指标一定参与数值转换
+if main_metric not in selected_numeric_cols:
+    selected_numeric_cols = [main_metric] + selected_numeric_cols
+
+# 清洗与数值转换必须放在所有页面渲染之前，否则 clean_summary/numeric_report 等变量会未定义
+df, quality_report, clean_summary, numeric_report = clean_data(
+    raw_df,
+    selected_numeric_cols,
+    date_col,
+    missing_strategy
+)
+
+valid_date_col = None
+if date_col and date_col in df.columns:
+    parsed, ratio, valid, reason = try_parse_date(df[date_col])
+    if valid:
+        valid_date_col = date_col
+        df[date_col] = parsed
+    else:
+        st.sidebar.warning(f"日期字段“{date_col}”暂不作为有效日期使用：{reason}")
+
+numeric_cols = safe_numeric_cols(df, selected_numeric_cols)
+
+if main_metric not in numeric_cols:
+    st.error(f"主指标“{main_metric}”没有可用数值。请在左侧重新选择主指标，或在“数据治理”中查看数值转换报告。")
+    st.stop()
+
+selected_dimensions = [d for d in selected_dimensions if d in df.columns]
+
+try:
+    anomaly_df = anomaly_detection(df, main_metric, numeric_cols, selected_dimensions, valid_date_col)
+except Exception as e:
+    st.warning(f"异常诊断暂未生成：{e}")
+    anomaly_df = pd.DataFrame()
+
+
 # ============================================================
 # 数据治理可视化辅助函数
 # ============================================================
