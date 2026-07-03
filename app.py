@@ -349,6 +349,37 @@ div[data-testid="stMarkdownContainer"] li {
     margin: 10px 0 8px 0;
 }
 
+
+.qa-answer-card {
+    background: linear-gradient(135deg, #EAF4FF 0%, #FFFFFF 100%);
+    border: 1px solid #D6E8FF;
+    border-left: 7px solid #1E77D3;
+    border-radius: 20px;
+    padding: 18px 22px;
+    margin: 12px 0 16px 0;
+    box-shadow: 0 10px 24px rgba(30, 119, 211, .08);
+}
+.qa-answer-title {
+    font-size: 18px;
+    font-weight: 950;
+    color: #0B3A6A;
+    margin-bottom: 8px;
+}
+.qa-answer-text {
+    font-size: 19px;
+    font-weight: 700;
+    color: #10213F;
+    line-height: 1.8;
+}
+.qa-check-card {
+    background: #FFFFFF;
+    border: 1px solid #E5EBF3;
+    border-radius: 18px;
+    padding: 14px 18px;
+    margin: 8px 0 14px 0;
+    box-shadow: 0 8px 18px rgba(30,55,90,.05);
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -1859,6 +1890,201 @@ def build_schema_text(df, meta=None):
     return "\n".join(lines)
 
 
+
+def build_schema_text_enhanced(raw_df, sql_df, meta=None):
+    """
+    给大模型提供“标准SQL字段名 + 原始字段名 + 字段语义 + 示例值”，
+    避免模型只看到规范化字段名后误解业务含义。
+    """
+    meta_map = {}
+    if meta is not None and isinstance(meta, pd.DataFrame) and "字段名" in meta.columns:
+        meta_map = {str(r["字段名"]): r.to_dict() for _, r in meta.iterrows()}
+
+    lines = []
+    for raw_col, sql_col in zip(raw_df.columns, sql_df.columns):
+        dtype = str(sql_df[sql_col].dtype)
+        samples = sql_df[sql_col].dropna().astype(str).head(3).tolist()
+        m = meta_map.get(str(raw_col), {})
+        meaning = m.get("字段含义解释", "")
+        role = m.get("推荐角色", "")
+        agg = m.get("推荐聚合方式", "")
+        lines.append(
+            f"- SQL字段：{sql_col}｜原始字段：{raw_col}｜类型：{dtype}｜推荐角色：{role}｜推荐聚合：{agg}｜含义：{meaning}｜示例：{samples}"
+        )
+    return "\n".join(lines)
+
+
+def _find_best_column_by_keywords(columns, keywords):
+    for kw in keywords:
+        for c in columns:
+            if kw.lower() in str(c).lower():
+                return c
+    return None
+
+
+def infer_question_parse(question, raw_df, sql_df, meta=None):
+    """
+    对自然语言问题做轻量级口径解析。它不替代大模型，而是给模型和用户一个可追溯的分析口径。
+    """
+    q = str(question)
+    raw_cols = list(raw_df.columns)
+    sql_cols = list(sql_df.columns)
+    raw_to_sql = {str(raw): str(sql) for raw, sql in zip(raw_cols, sql_cols)}
+
+    # 候选字段
+    amount_cols = [c for c in raw_cols if is_amount_like(c)]
+    qty_cols = [c for c in raw_cols if is_quantity_like(c)]
+    rate_cols = [c for c in raw_cols if is_rate_like(c)]
+    dim_cols = [c for c in raw_cols if c not in amount_cols + qty_cols + rate_cols and not is_id_like(c)]
+    product_col = _find_best_column_by_keywords(raw_cols, ["产品名称", "商品名称", "产品", "商品", "sku", "SKU", "品类", "类别", "子类别"])
+    customer_col = _find_best_column_by_keywords(raw_cols, ["客户名称", "客户", "顾客"])
+    region_col = _find_best_column_by_keywords(raw_cols, ["地区", "区域", "省", "城市", "国家"])
+    date_col = _find_best_column_by_keywords(raw_cols, ["日期", "时间", "月份", "date", "month", "period"])
+
+    metric_raw = None
+    metric_reason = ""
+    if re.search(r"销售量|销量|销售数量|卖出数量|数量", q):
+        metric_raw = _find_best_column_by_keywords(qty_cols, ["数量", "quantity", "qty", "count", "number"]) or (qty_cols[0] if qty_cols else None)
+        metric_reason = "问题中出现“销售量/数量”等表达，优先理解为数量类字段的合计。"
+    elif re.search(r"销售额|销售金额|收入|营收|金额", q):
+        metric_raw = _find_best_column_by_keywords(amount_cols, ["销售额", "销售", "收入", "revenue", "sales", "amount"]) or (amount_cols[0] if amount_cols else None)
+        metric_reason = "问题中出现“销售额/收入/金额”等表达，优先理解为金额类字段的合计。"
+    elif re.search(r"利润|收益", q):
+        metric_raw = _find_best_column_by_keywords(amount_cols, ["利润", "profit", "收益"]) or (amount_cols[0] if amount_cols else None)
+        metric_reason = "问题中出现“利润/收益”等表达，优先理解为利润或收益类字段。"
+    elif re.search(r"成本|费用|支出", q):
+        metric_raw = _find_best_column_by_keywords(amount_cols, ["成本", "费用", "支出", "cost", "expense"]) or (amount_cols[0] if amount_cols else None)
+        metric_reason = "问题中出现“成本/费用/支出”等表达，优先理解为成本费用类字段。"
+
+    dim_raw = None
+    dim_reason = ""
+    if re.search(r"产品|商品|SKU|sku|品类|类别", q):
+        dim_raw = product_col
+        dim_reason = "问题中出现“产品/商品/SKU/类别”等表达，优先按产品或商品相关字段分组。"
+    elif re.search(r"客户|顾客", q):
+        dim_raw = customer_col
+        dim_reason = "问题中出现“客户/顾客”等表达，优先按客户相关字段分组。"
+    elif re.search(r"地区|区域|省|城市|国家", q):
+        dim_raw = region_col
+        dim_reason = "问题中出现“地区/区域/省/城市”等表达，优先按地域字段分组。"
+    elif len(dim_cols):
+        # 问题涉及最高、排名但没有明确维度时，给出一个常见维度作为参考
+        if re.search(r"最高|最低|排名|前\d+|top", q, flags=re.I):
+            dim_raw = dim_cols[0]
+            dim_reason = "问题涉及排名或最高/最低，但未明确分组字段，系统根据字段类型推荐一个可分组维度。"
+
+    order = "降序" if re.search(r"最高|最大|最多|前\d+|top", q, flags=re.I) else ("升序" if re.search(r"最低|最小|最少", q) else "按问题语义确定")
+    agg = "求和" if metric_raw and not is_rate_like(metric_raw) else ("平均" if metric_raw and is_rate_like(metric_raw) else "按问题语义确定")
+    limit = 1 if re.search(r"是什么|哪一个|最高|最低|最大|最小|最多|最少", q) and not re.search(r"前\d+|top\s*\d+", q, flags=re.I) else None
+
+    parsed = {
+        "指标字段": metric_raw or "由模型结合问题判断",
+        "SQL指标字段": raw_to_sql.get(metric_raw, "") if metric_raw else "",
+        "分组字段": dim_raw or "由模型结合问题判断",
+        "SQL分组字段": raw_to_sql.get(dim_raw, "") if dim_raw else "",
+        "聚合方式": agg,
+        "排序方式": order,
+        "返回范围": f"Top {limit}" if limit else "按问题要求返回",
+        "查询范围": "当前上传数据全表",
+        "解析依据": "；".join([x for x in [metric_reason, dim_reason] if x]) or "系统根据字段名称、字段类型和问题关键词生成口径建议。"
+    }
+
+    hint_lines = [
+        f"问题解析口径建议：",
+        f"- 指标字段：{parsed['指标字段']}（SQL字段：{parsed['SQL指标字段']}）",
+        f"- 分组字段：{parsed['分组字段']}（SQL字段：{parsed['SQL分组字段']}）",
+        f"- 聚合方式：{parsed['聚合方式']}",
+        f"- 排序方式：{parsed['排序方式']}",
+        f"- 返回范围：{parsed['返回范围']}",
+        f"- 解析依据：{parsed['解析依据']}",
+        "若该口径与用户问题不冲突，请优先采用；若不适用，请说明并使用更合理字段。"
+    ]
+    return parsed, "\n".join(hint_lines)
+
+
+def make_result_direct_summary(question, result_df, parse_info):
+    """在模型解释之外，先用数据库执行结果生成一个确定性的直接答案，减少模型幻觉。"""
+    if result_df is None or not isinstance(result_df, pd.DataFrame) or result_df.empty:
+        return "当前查询未返回结果，建议检查问题口径或更换查询条件。"
+
+    row = result_df.iloc[0].to_dict()
+    items = list(row.items())
+    if len(items) == 1:
+        k, v = items[0]
+        return f"根据当前查询结果，{k} 为 {money_fmt(v) if isinstance(v, (int, float, np.number)) else v}。"
+    # 优先展示第一列对象 + 第二列指标
+    k1, v1 = items[0]
+    k2, v2 = items[1]
+    v2_fmt = money_fmt(v2) if isinstance(v2, (int, float, np.number)) else v2
+    return f"根据当前查询结果，{k1} 为“{v1}”的记录排名靠前，其 {k2} 为 {v2_fmt}。"
+
+
+def extract_direct_answer(explanation, fallback):
+    if not explanation:
+        return fallback
+    text = str(explanation).strip()
+    m = re.search(r"【直接回答】\s*(.*)", text)
+    if m:
+        line = m.group(1).strip()
+        if line:
+            return line
+    # fallback to first non-empty line but remove headings
+    for line in text.splitlines():
+        line = line.strip().lstrip("#").strip()
+        if not line:
+            continue
+        line = re.sub(r"^(直接回答|查询结论|结论)[：:]\s*", "", line)
+        if len(line) > 5:
+            return line[:220]
+    return fallback
+
+
+def build_sql_validation_info(ok, result_df, sql, parse_info, columns, error=""):
+    sql_text = str(sql)
+    expected = []
+    for k in ["SQL指标字段", "SQL分组字段"]:
+        v = parse_info.get(k, "")
+        if v:
+            expected.append(v)
+    used_expected = [c for c in expected if c and str(c).lower() in sql_text.lower()]
+    used_all = [c for c in columns if str(c).lower() in sql_text.lower()]
+    agg_ok = "SUM(" in sql_text.upper() if parse_info.get("聚合方式") == "求和" else True
+    group_ok = ("GROUP BY" in sql_text.upper()) if parse_info.get("分组字段") not in ["", "由模型结合问题判断"] else True
+
+    if ok and len(result_df) > 0 and (not expected or len(used_expected) >= min(1, len(expected))):
+        credibility = "较高"
+    elif ok:
+        credibility = "中等"
+    else:
+        credibility = "较低"
+
+    return {
+        "SQL安全性": "通过" if is_safe_select_sql(sql)[0] else "未通过",
+        "SQL可执行": "是" if ok else "否",
+        "结果行数": int(len(result_df)) if isinstance(result_df, pd.DataFrame) else 0,
+        "字段匹配": "、".join(used_expected) if used_expected else ("未命中口径建议字段" if expected else "未设置口径建议字段"),
+        "实际使用字段": "、".join(used_all[:8]) if used_all else "未识别",
+        "聚合逻辑": "包含求和聚合" if agg_ok and "SUM(" in sql_text.upper() else ("无需聚合或由SQL决定" if agg_ok else "可能未按建议聚合"),
+        "分组逻辑": "包含分组" if group_ok and "GROUP BY" in sql_text.upper() else ("无需分组或由SQL决定" if group_ok else "可能未按建议分组"),
+        "综合可信度": credibility,
+        "错误信息": error or ""
+    }
+
+
+def render_parse_info(parse_info):
+    show = pd.DataFrame([
+        {"项目": "指标理解", "内容": f"{parse_info.get('指标字段')}；聚合方式：{parse_info.get('聚合方式')}"},
+        {"项目": "分组理解", "内容": f"{parse_info.get('分组字段')}；排序方式：{parse_info.get('排序方式')}"},
+        {"项目": "查询范围", "内容": f"{parse_info.get('查询范围')}；返回范围：{parse_info.get('返回范围')}"},
+        {"项目": "解析依据", "内容": parse_info.get("解析依据", "")}
+    ])
+    st.dataframe(show, use_container_width=True, hide_index=True)
+
+
+def render_validation_info(validation):
+    show = pd.DataFrame([{"校验项": k, "结果": v} for k, v in validation.items() if k != "错误信息" or v])
+    st.dataframe(show, use_container_width=True, hide_index=True)
+
 def extract_sql(text):
     if not text:
         return ""
@@ -1928,11 +2154,13 @@ def score_llm_query(ok, result_df, sql, explanation, elapsed, columns):
     return min(int(score), 100), detail
 
 
+
 def run_llm_sql_question(provider, question, df, meta):
     sql_df = to_sqlite_df(df)
     con = sqlite3.connect(":memory:")
     sql_df.to_sql("data", con, index=False, if_exists="replace")
-    schema = build_schema_text(sql_df, meta=None)
+    schema = build_schema_text_enhanced(df, sql_df, meta)
+    parse_info, parse_hint = infer_question_parse(question, df, sql_df, meta)
 
     system_prompt = """
 你是一个严谨的数据分析 SQL 助手。你的任务是把用户的自然语言问题转换为 SQLite SELECT 查询语句。
@@ -1940,19 +2168,33 @@ def run_llm_sql_question(provider, question, df, meta):
 1. 只输出 SQL，不要解释；
 2. 表名固定为 data；
 3. 只能使用 SELECT；
-4. 字段名必须严格来自字段信息，中文或特殊字段名请使用双引号；
-5. 尽量使用 LIMIT 20 控制输出；
-6. 若问题涉及排名、最高、最低，请使用 ORDER BY；
-7. 若问题涉及分组统计，请使用 GROUP BY。
+4. 字段名必须严格来自字段信息中的“SQL字段”，中文或特殊字段名请使用双引号；
+5. 若问题涉及“销售量/销量/销售数量”，通常应优先使用数量类字段求和，而不是销售额；
+6. 若问题涉及“产品/商品/SKU”，通常应优先使用产品或商品相关字段分组；
+7. 若问题涉及排名、最高、最低，请使用 ORDER BY；
+8. 若问题涉及分组统计，请使用 GROUP BY；
+9. 尽量使用 LIMIT 控制输出，用户问“最高是什么/哪一个最高”时一般 LIMIT 1。
 """
-    user_prompt = f"字段信息：\n{schema}\n\n用户问题：{question}\n\n请生成 SQLite SELECT 查询语句。"
+    user_prompt = f"""字段信息：
+{schema}
+
+{parse_hint}
+
+用户问题：{question}
+
+请生成 SQLite SELECT 查询语句。"""
     content, elapsed = call_llm(provider, system_prompt, user_prompt, temperature=0)
     sql = extract_sql(content)
 
     safe, reason = is_safe_select_sql(sql)
     if not safe:
+        validation = build_sql_validation_info(False, pd.DataFrame(), sql, parse_info, sql_df.columns, reason)
         score, detail = score_llm_query(False, pd.DataFrame(), sql, "", elapsed, sql_df.columns)
-        return {"模型": provider, "SQL": sql, "是否成功": False, "错误信息": reason, "结果": pd.DataFrame(), "解释": "", "响应时间": elapsed, "综合评分": score, "评分明细": detail}
+        return {
+            "模型": provider, "SQL": sql, "是否成功": False, "错误信息": reason, "结果": pd.DataFrame(),
+            "解释": "", "直接回答": "本次查询未成功，暂无法给出可靠答案。", "口径解释": parse_info,
+            "校验信息": validation, "响应时间": elapsed, "综合评分": score, "评分明细": detail
+        }
 
     try:
         result = pd.read_sql_query(sql, con)
@@ -1961,17 +2203,55 @@ def run_llm_sql_question(provider, question, df, meta):
         result = pd.DataFrame()
         ok, error = False, str(e)
 
+    fallback_answer = make_result_direct_summary(question, result, parse_info) if ok else "本次查询未成功，暂无法给出可靠答案。"
+    validation = build_sql_validation_info(ok, result, sql, parse_info, sql_df.columns, error)
+
     explanation = ""
+    direct_answer = fallback_answer
     if ok:
         try:
-            exp_system = "你是一名经营数据分析顾问。请根据查询结果，用中文简洁解释结论、经营含义和建议。"
-            exp_user = f"用户问题：{question}\nSQL：{sql}\n查询结果：\n{result.head(20).to_markdown(index=False)}\n\n请输出：1. 查询结论；2. 经营含义；3. 后续建议。"
-            explanation, _ = call_llm(provider, exp_system, exp_user, temperature=0.2)
+            exp_system = "你是一名严谨的经营数据分析顾问。你必须基于SQL查询结果回答，不能编造结果。"
+            exp_user = f"""
+用户问题：{question}
+系统解析口径：{json.dumps(parse_info, ensure_ascii=False)}
+SQL：{sql}
+查询结果：
+{result.head(20).to_markdown(index=False)}
+
+请用中文输出：
+【直接回答】用一句话直接回答用户问题，必须引用查询结果中的对象和值。
+【口径说明】说明本次把问题中的关键词理解成哪些字段、采用什么聚合和排序。
+【经营含义】解释这个结果对经营管理有什么含义。
+【后续建议】给出1-2条可执行建议。
+"""
+            explanation, _ = call_llm(provider, exp_system, exp_user, temperature=0.15)
+            direct_answer = extract_direct_answer(explanation, fallback_answer)
         except Exception as e:
             explanation = f"SQL 已执行成功，但结果解释生成失败：{e}"
+            direct_answer = fallback_answer
 
     score, detail = score_llm_query(ok, result, sql, explanation, elapsed, sql_df.columns)
-    return {"模型": provider, "SQL": sql, "是否成功": ok, "错误信息": error, "结果": result, "解释": explanation, "响应时间": elapsed, "综合评分": score, "评分明细": detail}
+
+    # 字段口径命中加一点说明，不直接篡改模型结果
+    if validation.get("字段匹配") == "未命中口径建议字段":
+        detail["口径一致性提示"] = "生成SQL未明显使用系统推荐的口径字段，建议人工核对。"
+    else:
+        detail["口径一致性提示"] = "生成SQL与系统推荐口径基本一致。"
+
+    return {
+        "模型": provider,
+        "SQL": sql,
+        "是否成功": ok,
+        "错误信息": error,
+        "结果": result,
+        "解释": explanation,
+        "直接回答": direct_answer,
+        "口径解释": parse_info,
+        "校验信息": validation,
+        "响应时间": elapsed,
+        "综合评分": score,
+        "评分明细": detail
+    }
 
 
 def generate_dynamic_questions(main_metric, dimensions, numeric_cols, date_col):
@@ -2412,7 +2692,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 
 with tab1:
     st.subheader("🧩 数据治理")
-    st.markdown('<div class="tip-card">本页先给出数据健康度、字段资产地图和质量体检结论；详细表格默认折叠，用户需要时再展开查看。</div>', unsafe_allow_html=True)
+    st.markdown('<div class="tip-card">系统自动评估数据质量、识别字段角色并生成字段资产地图，帮助用户快速确认哪些字段适合作为主指标、分析维度和时间字段；详细字段表与处理日志默认折叠，便于需要时追溯分析依据。</div>', unsafe_allow_html=True)
 
     health_score = compute_data_health_score(clean_summary, meta, numeric_report, metric_candidates, dimension_candidates, date_candidates)
 
@@ -2524,8 +2804,8 @@ with tab2:
         st.markdown("### 动态趋势演示")
         st.markdown("""
         <div class="highlight-note">
-        <b>显示条件：</b>只有当上传数据中存在有效日期字段、主指标可按时间汇总，且时间周期不少于 3 个时，系统才会生成动态图。
-        动态图按时间顺序逐步展开主指标轨迹，适合汇报时展示经营指标从起点到当前周期的变化过程；横轴只保留关键区间刻度，避免时间标签过密。
+        <b>生成条件：</b>当上传数据中存在有效日期字段、主指标可按时间汇总，且时间周期不少于 3 个时，系统会生成动态趋势图。
+        动态图按时间顺序展示主指标从起点到当前周期的演变过程；横轴仅保留关键时间刻度，便于观察整体变化方向。
         </div>
         """, unsafe_allow_html=True)
         animated_trend_chart(trend, main_metric, f"{main_metric}动态趋势演示")
@@ -2820,7 +3100,7 @@ with tab4:
 
 with tab5:
     st.subheader("💬 问数助手")
-    st.markdown("用户可输入任意与当前数据相关的问题，系统会调用所选大模型生成 SQL、执行查询，并返回结果解释。")
+    st.markdown("用户可输入任意与当前数据相关的问题，系统会调用所选大模型生成 SQL 并执行查询；同时展示 AI 直接回答、问题解析口径、查询结果和系统校验信息，提升问数结果的可追溯性。")
 
     with st.expander("查看问数任务综合评分规则"):
         st.markdown("""
@@ -2868,18 +3148,43 @@ with tab5:
                     except Exception as e:
                         pack = {"模型": provider, "SQL": "", "是否成功": False, "错误信息": str(e), "结果": pd.DataFrame(), "解释": "", "响应时间": np.nan, "综合评分": 0, "评分明细": {}}
 
-                if pack["SQL"]:
-                    st.code(pack["SQL"], language="sql")
                 if pack["是否成功"]:
                     st.success(f"执行成功｜响应时间：{pack['响应时间']:.2f}秒｜综合评分：{pack['综合评分']}")
+                    st.markdown(f"""
+                    <div class="qa-answer-card">
+                        <div class="qa-answer-title">AI直接回答</div>
+                        <div class="qa-answer-text">{pack.get('直接回答', '')}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    st.markdown("#### 问题解析口径")
+                    render_parse_info(pack.get("口径解释", {}))
+
+                    st.markdown("#### SQL 查询语句")
+                    if pack["SQL"]:
+                        st.code(pack["SQL"], language="sql")
+
+                    st.markdown("#### 数据库执行结果")
                     st.dataframe(pack["结果"], use_container_width=True)
-                    st.markdown("#### 模型解释")
-                    st.info(pack["解释"])
+
+                    st.markdown("#### 结果解释")
+                    render_ai_answer_pretty(pack.get("解释", ""))
+
+                    with st.expander("查看系统校验与评分明细", expanded=False):
+                        st.markdown("##### 系统校验信息")
+                        render_validation_info(pack.get("校验信息", {}))
+                        st.markdown("##### 评分明细")
+                        st.json(pack["评分明细"])
                 else:
                     st.error(f"执行失败：{pack['错误信息']}")
-
-                with st.expander("查看评分明细"):
-                    st.json(pack["评分明细"])
+                    st.markdown("#### 问题解析口径")
+                    render_parse_info(pack.get("口径解释", {}))
+                    if pack["SQL"]:
+                        st.markdown("#### SQL 查询语句")
+                        st.code(pack["SQL"], language="sql")
+                    with st.expander("查看系统校验与评分明细", expanded=False):
+                        render_validation_info(pack.get("校验信息", {}))
+                        st.json(pack["评分明细"])
 
                 st.session_state["llm_records"].append({
                     "模型": provider,
@@ -2888,6 +3193,8 @@ with tab5:
                     "结果行数": len(pack["结果"]) if isinstance(pack["结果"], pd.DataFrame) else 0,
                     "响应时间秒": round(pack["响应时间"], 2) if not pd.isna(pack["响应时间"]) else None,
                     "问数任务综合评分": pack["综合评分"],
+                    "综合可信度": pack.get("校验信息", {}).get("综合可信度", ""),
+                    "口径字段": f"{pack.get('口径解释', {}).get('分组字段', '')} / {pack.get('口径解释', {}).get('指标字段', '')}",
                     "错误信息": pack["错误信息"]
                 })
 
@@ -2920,13 +3227,15 @@ with tab6:
         default=["综合经营", "维度结构", "异常风险"]
     )
 
-    st.markdown("### 简报内容预览")
-    st.info(f"本次简报将围绕主指标“{main_metric}”生成，当前数据共 {len(df):,} 条记录。系统将输出核心指标、趋势/结构分析、异常原因解释、风险归纳和可落地管理建议；不会引用上传数据中不存在的字段。")
+    st.markdown("### 决策简报预览")
+    st.info(f"系统将基于当前上传数据、主分析指标“{main_metric}”和所选关注重点生成 Word 决策简报。当前数据共 {len(df):,} 条记录。下方展示的是即将写入报告的核心分析口径和代表性图表，完整报告将在点击生成后下载。")
 
     if selected_dimensions:
         dim = selected_dimensions[0]
-        g = dimension_summary(df, dim, main_metric).head(10)
-        bar_chart(g, dim, f"{main_metric}合计", f"简报图表预览：按{dim}的{main_metric}Top10")
+        full_g = dimension_summary(df, dim, main_metric)
+        g = full_g.head(10)
+        preview_title = f"代表性图表预览：按{dim}汇总{main_metric}" if len(full_g) <= 10 else f"代表性图表预览：按{dim}的{main_metric}Top10"
+        bar_chart(g, dim, f"{main_metric}合计", preview_title)
 
     if st.button("生成并下载 Word 简报", type="primary"):
         try:
