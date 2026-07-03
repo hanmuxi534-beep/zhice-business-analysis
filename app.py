@@ -64,7 +64,7 @@ st.markdown("""
 
 .stApp { background: radial-gradient(circle at top left, #F8FBFF 0, #F3F6FB 42%, #EEF3FA 100%); }
 .block-container { padding-top: 1.1rem; padding-bottom: 2.6rem; max-width: 1680px; }
-html, body, [class*="css"] { font-size: 18px; }
+html, body, [class*="css"] { font-size: 17px; }
 section[data-testid="stSidebar"] {
     background: linear-gradient(180deg, #EEF4FB 0%, #E8EEF6 100%);
     border-right: 1px solid #DDE6F1;
@@ -77,11 +77,11 @@ section[data-testid="stSidebar"] h3 {
 }
 section[data-testid="stSidebar"] div[data-testid="stMarkdownContainer"] p,
 section[data-testid="stSidebar"] li {
-    font-size: 17px;
-    line-height: 1.75;
+    font-size: 16px;
+    line-height: 1.7;
 }
 label[data-testid="stWidgetLabel"] {
-    font-size: 17px !important;
+    font-size: 16px !important;
     font-weight: 800 !important;
     color: #243654 !important;
 }
@@ -90,7 +90,7 @@ label[data-testid="stWidgetLabel"] {
 .stTextInput input {
     min-height: 48px;
     border-radius: 14px !important;
-    font-size: 17px !important;
+    font-size: 16px !important;
 }
 .stButton button {
     border-radius: 14px !important;
@@ -125,8 +125,8 @@ h2 { font-size: 34px !important; font-weight: 950 !important; color: var(--zc-te
 h3 { font-size: 25px !important; font-weight: 900 !important; color: var(--zc-text); margin-top: 16px !important; }
 div[data-testid="stMarkdownContainer"] p,
 div[data-testid="stMarkdownContainer"] li {
-    font-size: 18px;
-    line-height: 1.9;
+    font-size: 17px;
+    line-height: 1.85;
 }
 .hero {
     background:
@@ -160,9 +160,9 @@ div[data-testid="stMarkdownContainer"] li {
     width: 100%;
     background: linear-gradient(90deg, #1E77D3, #78B7FF);
 }
-.metric-title { color: var(--zc-muted); font-size: 17px; font-weight: 800; margin-bottom: 12px; }
+.metric-title { color: var(--zc-muted); font-size: 16px; font-weight: 800; margin-bottom: 12px; }
 .metric-value { color: #071F43; font-size: 38px; font-weight: 950; letter-spacing: .2px; line-height: 1.1; }
-.metric-note { color: #8290A5; font-size: 16px; margin-top: 12px; line-height: 1.55; }
+.metric-note { color: #8290A5; font-size: 14px; margin-top: 12px; line-height: 1.55; }
 .section-card {
     background: var(--zc-card);
     border: 1px solid var(--zc-line);
@@ -211,7 +211,7 @@ div[data-testid="stMarkdownContainer"] li {
 }
 .example-title { font-size: 15px; color: #60718A; font-weight: 900; margin-bottom: 8px; }
 .example-q { font-size: 17px; color: #0B2142; line-height: 1.65; font-weight: 650; }
-.small-text { color: #5E6F86; font-size: 17px; line-height: 1.85; }
+.small-text { color: #5E6F86; font-size: 16px; line-height: 1.85; }
 [data-testid="stDataFrame"] {
     border-radius: 18px;
     overflow: hidden;
@@ -242,7 +242,7 @@ hr { border-color: #DDE6F1; }
     margin-bottom: 10px;
 }
 .field-card-desc {
-    font-size: 16px;
+    font-size: 15px;
     color: #66758C;
     line-height: 1.65;
     margin-bottom: 12px;
@@ -281,8 +281,8 @@ hr { border-color: #DDE6F1; }
     margin-bottom: 12px !important;
 }
 .health-line {
-    font-size: 18px;
-    line-height: 1.9;
+    font-size: 17px;
+    line-height: 1.85;
     color: #40516A;
 }
 .progress-row {
@@ -310,12 +310,30 @@ hr { border-color: #DDE6F1; }
 }
 .detail-expander-note {
     color: #66758C;
-    font-size: 16px;
+    font-size: 15px;
     line-height: 1.7;
     margin-bottom: 10px;
 }
 
 
+/* 汇报增强补充 */
+div[data-testid="stMarkdownContainer"] p,
+div[data-testid="stMarkdownContainer"] li {
+    font-size: 18px !important;
+    line-height: 1.95 !important;
+}
+.small-text { font-size: 18px !important; line-height: 1.95 !important; }
+.detail-expander-note { font-size: 17px !important; line-height: 1.85 !important; }
+.highlight-note {
+    background: linear-gradient(90deg, #F4F8FF 0%, #FFFFFF 100%);
+    border-left: 6px solid #1E77D3;
+    border-radius: 16px;
+    padding: 15px 18px;
+    font-size: 18px;
+    color: #334766;
+    line-height: 1.9;
+    margin: 12px 0 16px 0;
+}
 .ai-table-card {
     background: #FFFFFF;
     border: 1px solid #E5EBF3;
@@ -325,20 +343,10 @@ hr { border-color: #DDE6F1; }
     margin: 12px 0 18px 0;
 }
 .ai-section-title {
-    font-size: 20px;
+    font-size: 21px;
     font-weight: 950;
     color: #10213F;
     margin: 10px 0 8px 0;
-}
-.highlight-note {
-    background: linear-gradient(90deg, #F4F8FF 0%, #FFFFFF 100%);
-    border-left: 6px solid #1E77D3;
-    border-radius: 16px;
-    padding: 14px 18px;
-    font-size: 17px;
-    color: #334766;
-    line-height: 1.85;
-    margin: 12px 0;
 }
 
 </style>
@@ -821,18 +829,29 @@ def line_chart(df, x, y, title):
     if plot.empty:
         show_no_chart_reason(title, f"{y} 没有有效数值，或 {x} 没有有效取值。")
         return
+
+    x_values = plot[x].astype(str).tolist()
+    y_values = plot[y].astype(float).tolist()
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=plot[x].astype(str).tolist(),
-        y=plot[y].astype(float).tolist(),
+        x=x_values,
+        y=y_values,
         mode="lines+markers",
         line=dict(width=4),
         marker=dict(size=8, line=dict(width=1, color="#FFFFFF")),
         hovertemplate=f"{x}=%{{x}}<br>{y}=%{{y:,.2f}}<extra></extra>"
     ))
     fig.update_layout(title=title, xaxis_title=x, yaxis_title=y, hovermode="x unified")
-    safe_plotly_chart(fig, title, 540)
 
+    # 时间点较多时只显示少量横轴刻度，避免密密麻麻挤在一起
+    if len(x_values) > 12:
+        step = max(1, len(x_values) // 8)
+        tickvals = [x_values[i] for i in range(0, len(x_values), step)]
+        if x_values[-1] not in tickvals:
+            tickvals.append(x_values[-1])
+        fig.update_xaxes(type="category", tickmode="array", tickvals=tickvals, tickangle=0)
+
+    safe_plotly_chart(fig, title, 540)
 
 def histogram_chart(df, col, title):
     s = to_finite_numeric_series(df, col)
@@ -1207,10 +1226,7 @@ def relationship_explanation(x, y, corr):
 
 
 def correlation_summary_tables(df, numeric_cols):
-    """
-    生成所有经营数值指标之间的相关系数矩阵和长表。
-    用途：让用户不用逐个选择散点图，也能快速看出所有指标之间的强弱关系。
-    """
+    """汇总所有经营数值指标之间的相关系数，便于用户直接查看整体关系。"""
     scan_cols = [c for c in numeric_cols if c in df.columns and not is_id_like(c)]
     numeric_df = to_finite_numeric_frame(df, scan_cols)
     valid_cols = []
@@ -1256,20 +1272,16 @@ def correlation_summary_tables(df, numeric_cols):
 
 
 def parse_markdown_tables(text):
-    """
-    将大模型输出中的 Markdown 表格解析为 DataFrame，避免页面上直接显示 |---|---| 的不规范样式。
-    返回：[(before_text, table_df), ...], remaining_text
-    """
+    """将大模型输出中的 Markdown 表格解析成 DataFrame，避免页面显示 |---|---|。"""
     if not text:
         return [], ""
     lines = str(text).splitlines()
-    blocks = []
-    normal_lines = []
+    blocks, normal_lines = [], []
     i = 0
+    sep_pat = r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$"
     while i < len(lines):
         line = lines[i].strip()
-        if "|" in line and i + 1 < len(lines) and re.match(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$", lines[i + 1].strip()):
-            # collect possible table
+        if "|" in line and i + 1 < len(lines) and re.match(sep_pat, lines[i + 1].strip()):
             table_lines = [lines[i].strip(), lines[i + 1].strip()]
             i += 2
             while i < len(lines) and "|" in lines[i]:
@@ -1293,96 +1305,157 @@ def parse_markdown_tables(text):
 
 
 def render_ai_answer_pretty(ans):
-    """
-    美化大模型解释结果：正文正常显示，Markdown表格转为真正的数据表。
-    """
+    """美化大模型解释结果：正文正常显示，Markdown表格转成真正表格。"""
     blocks, tail = parse_markdown_tables(ans)
     if not blocks:
         st.markdown(ans)
         return
-
     for before, table_df in blocks:
         if before:
             st.markdown(before)
-        st.markdown('<div class="ai-table-card"><div class="ai-section-title">结构化核查清单</div>', unsafe_allow_html=True)
+        st.markdown('<div class="ai-table-card"><div class="ai-section-title">结构化核查清单</div></div>', unsafe_allow_html=True)
         st.dataframe(table_df, use_container_width=True, hide_index=True)
-        st.markdown('</div>', unsafe_allow_html=True)
     if tail:
         st.markdown(tail)
 
 
+def _sparse_period_ticks(periods, max_ticks=8):
+    periods = [str(x) for x in periods]
+    if len(periods) <= max_ticks:
+        return periods
+    step = max(1, int(np.ceil(len(periods) / max_ticks)))
+    vals = [periods[i] for i in range(0, len(periods), step)]
+    if periods[-1] not in vals:
+        vals.append(periods[-1])
+    return vals
+
+
 def animated_trend_chart(trend, metric, title=None):
     """
-    生成更清晰的动态趋势演示：每一帧展示从起点到当前周期的累计轨迹，
-    避免只看到滑动条变化但图形本身不明显。
+    更清晰的动态趋势演示：
+    1. 每一帧展示从起点到当前周期的累计轨迹；
+    2. 横轴只显示少量区间刻度，避免时间标签密集重叠；
+    3. 单独高亮当前点，适合答辩演示。
     """
     if trend is None or len(trend) < 3 or "期间" not in trend.columns or metric not in trend.columns:
-        st.info("当前时间序列不足，暂不生成动态趋势演示。")
+        st.info("当前未生成动态图：需要有效日期字段，并且时间周期不少于 3 个。")
         return
 
     plot = trend[["期间", metric]].dropna().copy()
     plot[metric] = pd.to_numeric(plot[metric], errors="coerce")
     plot = plot.dropna()
     if len(plot) < 3:
-        st.info("当前趋势有效点不足，暂不生成动态趋势演示。")
+        st.info("当前未生成动态图：当前主指标在时间维度上的有效点不足。")
         return
 
     periods = plot["期间"].astype(str).tolist()
     values = plot[metric].astype(float).tolist()
     ymin, ymax = min(values), max(values)
-    pad = (ymax - ymin) * 0.12 if ymax != ymin else max(abs(ymax) * 0.1, 1)
+    pad = (ymax - ymin) * 0.15 if ymax != ymin else max(abs(ymax) * 0.1, 1)
+    tickvals = _sparse_period_ticks(periods, max_ticks=8)
 
     frames = []
     for i in range(1, len(plot) + 1):
         frames.append(go.Frame(
-            data=[go.Scatter(
-                x=periods[:i],
-                y=values[:i],
-                mode="lines+markers",
-                line=dict(width=5),
-                marker=dict(size=9),
-                name=metric
-            )],
+            data=[
+                go.Scatter(
+                    x=periods[:i],
+                    y=values[:i],
+                    mode="lines",
+                    fill="tozeroy",
+                    line=dict(width=5),
+                    name=f"{metric}累计轨迹",
+                    hovertemplate="期间=%{x}<br>数值=%{y:,.2f}<extra></extra>"
+                ),
+                go.Scatter(
+                    x=[periods[i - 1]],
+                    y=[values[i - 1]],
+                    mode="markers+text",
+                    marker=dict(size=16, symbol="circle"),
+                    text=[money_fmt(values[i - 1])],
+                    textposition="top center",
+                    name="当前周期",
+                    hovertemplate="当前周期=%{x}<br>数值=%{y:,.2f}<extra></extra>"
+                )
+            ],
             name=periods[i - 1]
         ))
 
     fig = go.Figure(
-        data=[go.Scatter(
-            x=[periods[0]],
-            y=[values[0]],
-            mode="lines+markers",
-            line=dict(width=5),
-            marker=dict(size=9),
-            name=metric
-        )],
+        data=[
+            go.Scatter(
+                x=[periods[0]],
+                y=[values[0]],
+                mode="lines",
+                fill="tozeroy",
+                line=dict(width=5),
+                name=f"{metric}累计轨迹"
+            ),
+            go.Scatter(
+                x=[periods[0]],
+                y=[values[0]],
+                mode="markers+text",
+                marker=dict(size=16),
+                text=[money_fmt(values[0])],
+                textposition="top center",
+                name="当前周期"
+            )
+        ],
         frames=frames
     )
 
+    slider_steps = []
+    label_step = max(1, int(np.ceil(len(periods) / 8)))
+    for i, p in enumerate(periods):
+        slider_steps.append({
+            "args": [[p], {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}],
+            "label": p if (i % label_step == 0 or i == len(periods) - 1) else "",
+            "method": "animate"
+        })
+
     fig.update_layout(
         title=title or f"{metric}动态趋势演示",
-        xaxis=dict(title="期间", type="category", categoryorder="array", categoryarray=periods),
+        xaxis=dict(
+            title="期间",
+            type="category",
+            categoryorder="array",
+            categoryarray=periods,
+            tickmode="array",
+            tickvals=tickvals,
+            tickangle=0
+        ),
         yaxis=dict(title=metric, range=[ymin - pad, ymax + pad]),
+        hovermode="x unified",
         updatemenus=[{
             "type": "buttons",
             "showactive": False,
             "x": 0.02,
-            "y": 1.12,
+            "y": 1.15,
             "buttons": [
                 {"label": "播放", "method": "animate", "args": [None, {"frame": {"duration": 520, "redraw": True}, "fromcurrent": True}]},
                 {"label": "暂停", "method": "animate", "args": [[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}]}
             ]
         }],
         sliders=[{
-            "steps": [{"args": [[p], {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}], "label": p, "method": "animate"} for p in periods],
-            "currentvalue": {"prefix": "当前周期："},
+            "steps": slider_steps,
+            "currentvalue": {"prefix": "当前周期：", "font": {"size": 15}},
             "x": 0.08,
-            "len": 0.86
+            "len": 0.86,
+            "pad": {"t": 45, "b": 10}
         }]
     )
-    safe_plotly_chart(fig, title or f"{metric}动态趋势演示", 560)
+    safe_plotly_chart(fig, title or f"{metric}动态趋势演示", 590)
 
 
-def add_dataframe_to_docx(doc, df_table, max_rows=10):
+def clean_md_inline(text):
+    text = str(text)
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = re.sub(r"`([^`]*)`", r"\1", text)
+    text = text.replace("---", "").strip()
+    return text
+
+
+def add_dataframe_to_docx(doc, df_table, max_rows=12):
     if df_table is None or len(df_table) == 0:
         return
     show = df_table.head(max_rows).copy()
@@ -1390,108 +1463,179 @@ def add_dataframe_to_docx(doc, df_table, max_rows=10):
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     table.style = "Table Grid"
     for j, col in enumerate(show.columns):
-        table.rows[0].cells[j].text = str(col)
+        run = table.rows[0].cells[j].paragraphs[0].add_run(str(col))
+        set_run_font(run, "黑体", 10, True)
     for _, row in show.iterrows():
         cells = table.add_row().cells
         for j, col in enumerate(show.columns):
-            cells[j].text = str(row[col])
+            run = cells[j].paragraphs[0].add_run(clean_md_inline(row[col]))
+            set_run_font(run, "宋体", 9, False)
 
 
-def add_plotly_image_to_docx(doc, fig, caption):
-    """
-    将 Plotly 图表插入 Word。若服务器缺少 kaleido，则自动跳过，不影响报告生成。
-    """
-    try:
-        img = BytesIO()
-        fig.update_layout(template="plotly_white", width=900, height=520, font=dict(family="Microsoft YaHei, SimHei, Arial", size=15))
-        fig.write_image(img, format="png", scale=2)
-        img.seek(0)
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = p.add_run(caption)
-        set_run_font(run, "黑体", 11, True)
-        doc.add_picture(img, width=Inches(6.2))
-    except Exception:
-        add_para(doc, f"图表“{caption}”因当前部署环境缺少图像导出组件而未插入，但页面端图表可正常查看。", indent=False)
+def add_native_bar_visual(doc, title, rows, label_col="项目", value_col="数值", max_rows=10):
+    """用 Word 原生表格做条形图，避免云端导出图片时中文乱码。"""
+    if rows is None or len(rows) == 0:
+        return
+    add_heading(doc, title, 2)
+    data = pd.DataFrame(rows).copy().head(max_rows)
+    data[value_col] = pd.to_numeric(data[value_col], errors="coerce").fillna(0)
+    max_val = data[value_col].abs().max()
+    max_val = max(max_val, 1)
+
+    table = doc.add_table(rows=1, cols=3)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.style = "Table Grid"
+    headers = [label_col, value_col, "可视化条"]
+    for j, h in enumerate(headers):
+        run = table.rows[0].cells[j].paragraphs[0].add_run(h)
+        set_run_font(run, "黑体", 10, True)
+
+    for _, r in data.iterrows():
+        cells = table.add_row().cells
+        label = str(r[label_col])
+        val = float(r[value_col])
+        bar_len = int(abs(val) / max_val * 24)
+        bar = "█" * max(1, bar_len)
+        vals = [label, money_fmt(val), bar]
+        for j, v in enumerate(vals):
+            run = cells[j].paragraphs[0].add_run(str(v))
+            set_run_font(run, "宋体", 9, False)
 
 
-def make_trend_figure_for_doc(trend, metric):
-    fig = go.Figure()
-    if trend is not None and len(trend):
-        fig.add_trace(go.Scatter(
-            x=trend["期间"].astype(str).tolist(),
-            y=pd.to_numeric(trend[metric], errors="coerce").tolist(),
-            mode="lines+markers",
-            name=metric,
-            line=dict(width=4)
-        ))
-    fig.update_layout(title=f"{metric}时间趋势", xaxis_title="期间", yaxis_title=metric)
-    return fig
+def add_trend_visual_table(doc, trend, metric):
+    if trend is None or len(trend) == 0:
+        return
+    show = trend.tail(10).copy()
+    show[metric] = pd.to_numeric(show[metric], errors="coerce").fillna(0)
+    rows = [{"期间": r["期间"], "数值": r[metric]} for _, r in show.iterrows()]
+    add_native_bar_visual(doc, f"{metric}近10期趋势可视化", rows, "期间", "数值", 10)
 
 
-def make_dimension_bar_for_doc(df, dim, metric):
-    g = dimension_summary(df, dim, metric).head(10).copy()
-    fig = go.Figure(go.Bar(
-        x=g[f"{metric}合计"].astype(float).tolist(),
-        y=g[dim].astype(str).tolist(),
-        orientation="h"
-    ))
-    fig.update_layout(title=f"按{dim}的{metric}Top10", xaxis_title=metric, yaxis_title=dim)
-    return fig
+def add_dimension_visual_table(doc, df, dim, metric):
+    if not dim or dim not in df.columns:
+        return
+    g = dimension_summary(df, dim, metric).head(10)
+    rows = [{dim: r[dim], f"{metric}合计": r[f"{metric}合计"]} for _, r in g.iterrows()]
+    add_native_bar_visual(doc, f"按{dim}的{metric}Top10可视化", rows, dim, f"{metric}合计", 10)
 
 
-def make_risk_bar_for_doc(anomaly_df):
+def add_risk_visual_table(doc, anomaly_df):
+    if anomaly_df is None or len(anomaly_df) == 0 or "风险等级" not in anomaly_df.columns:
+        return
     rc = anomaly_df["风险等级"].value_counts().reset_index()
     rc.columns = ["风险等级", "数量"]
-    fig = go.Figure(go.Bar(x=rc["风险等级"].astype(str).tolist(), y=rc["数量"].astype(int).tolist()))
-    fig.update_layout(title="风险等级分布", xaxis_title="风险等级", yaxis_title="数量")
-    return fig
+    rows = [{"风险等级": r["风险等级"], "数量": r["数量"]} for _, r in rc.iterrows()]
+    add_native_bar_visual(doc, "风险等级分布可视化", rows, "风险等级", "数量", 10)
+
+
+def add_markdown_body_to_docx(doc, text, df, main_metric, dimensions, date_col, anomaly_df):
+    """
+    将 AI Markdown 正文整理成正式 Word 结构：
+    - 去掉 ###、**、--- 等 Markdown 符号；
+    - 一级/二级标题转为 Word 标题；
+    - Markdown 表格转为 Word 表格；
+    - 在对应章节中穿插原生可视化表，不再把图表集中堆到最后。
+    """
+    lines = str(text).splitlines()
+    current_section = ""
+    i = 0
+    sep_pat = r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$"
+    inserted_trend = False
+    inserted_dim = False
+    inserted_risk = False
+
+    while i < len(lines):
+        raw = lines[i].strip()
+        if not raw or raw == "---":
+            i += 1
+            continue
+
+        # Markdown table
+        if "|" in raw and i + 1 < len(lines) and re.match(sep_pat, lines[i + 1].strip()):
+            table_lines = [raw, lines[i + 1].strip()]
+            i += 2
+            while i < len(lines) and "|" in lines[i]:
+                table_lines.append(lines[i].strip())
+                i += 1
+            header = [clean_md_inline(x.strip()) for x in table_lines[0].strip("|").split("|")]
+            data = []
+            for row_line in table_lines[2:]:
+                cells = [clean_md_inline(x.strip()) for x in row_line.strip("|").split("|")]
+                if len(cells) < len(header):
+                    cells += [""] * (len(header) - len(cells))
+                data.append(cells[:len(header)])
+            add_dataframe_to_docx(doc, pd.DataFrame(data, columns=header), max_rows=15)
+            continue
+
+        # Headings
+        heading_match = re.match(r"^#{1,6}\s*(.+)$", raw)
+        cn_heading_match = re.match(r"^([一二三四五六七八九十]+、.+)$", raw)
+        num_heading_match = re.match(r"^(\d+[\.、].+)$", raw)
+
+        if heading_match or cn_heading_match or num_heading_match:
+            title = heading_match.group(1) if heading_match else (cn_heading_match.group(1) if cn_heading_match else num_heading_match.group(1))
+            title = clean_md_inline(title)
+            if "企业经营分析决策简报" in title or "基于" in title and "主指标" in title:
+                p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                run = p.add_run(title); set_run_font(run, "黑体", 14, True)
+            else:
+                current_section = title
+                add_heading(doc, title, 1 if re.match(r"^[一二三四五六七八九十]+、", title) else 2)
+
+                if ("核心经营表现" in title or "时间趋势" in title) and not inserted_trend:
+                    if date_col:
+                        trend = build_trend(df, date_col, main_metric)
+                        if len(trend) >= 2:
+                            add_trend_visual_table(doc, trend, main_metric)
+                            inserted_trend = True
+                    if dimensions and not inserted_dim:
+                        add_dimension_visual_table(doc, df, dimensions[0], main_metric)
+                        inserted_dim = True
+
+                if ("风险识别" in title or "异常" in title) and not inserted_risk:
+                    add_risk_visual_table(doc, anomaly_df)
+                    inserted_risk = True
+            i += 1
+            continue
+
+        # Bullets / normal paragraphs
+        clean = clean_md_inline(raw)
+        clean = re.sub(r"^[\-\*]\s+", "", clean)
+        clean = clean.replace("✅", "【行动】").strip()
+        if clean:
+            add_para(doc, clean, indent=not clean.startswith(("【行动】", "注：", ">")))
+        i += 1
+
+    # 如果 AI 文本没有触发对应标题，也补充可视化，保证报告有图表类内容
+    if date_col and not inserted_trend:
+        trend = build_trend(df, date_col, main_metric)
+        if len(trend) >= 2:
+            add_trend_visual_table(doc, trend, main_metric)
+    if dimensions and not inserted_dim:
+        add_dimension_visual_table(doc, df, dimensions[0], main_metric)
+    if anomaly_df is not None and len(anomaly_df) and not inserted_risk:
+        add_risk_visual_table(doc, anomaly_df)
 
 
 def generate_ai_report_docx(ai_text, df, main_metric, dimensions, date_col, anomaly_df, focus_list):
     if not DOCX_AVAILABLE:
         raise RuntimeError("未安装 python-docx，请先安装：python -m pip install python-docx")
+
     doc = Document()
-    title = doc.add_paragraph(); title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = title.add_run("智策经营——AI增强版决策简报"); set_run_font(r, "黑体", 20, True)
-    subtitle = doc.add_paragraph(); subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = subtitle.add_run("由大模型基于当前经营数据自动生成"); set_run_font(r, "宋体", 11, False); r.font.color.rgb = RGBColor(90,90,90)
+    title = doc.add_paragraph()
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = title.add_run("智策经营——AI增强版决策简报")
+    set_run_font(r, "黑体", 20, True)
 
-    add_heading(doc, "一、AI生成正文", 1)
-    blocks, tail = parse_markdown_tables(ai_text)
-    if not blocks:
-        for line in str(ai_text).splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            if re.match(r"^[一二三四五六七八九十]+、", line):
-                add_heading(doc, line, 1)
-            elif re.match(r"^\d+[\.\、]", line):
-                add_heading(doc, line, 2)
-            else:
-                add_para(doc, line)
-    else:
-        for before, table_df in blocks:
-            for line in before.splitlines():
-                line = line.strip()
-                if line:
-                    add_para(doc, line)
-            add_dataframe_to_docx(doc, table_df, max_rows=15)
-        if tail:
-            for line in tail.splitlines():
-                line = line.strip()
-                if line:
-                    add_para(doc, line)
+    subtitle = doc.add_paragraph()
+    subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = subtitle.add_run("AI 驱动的多维经营分析与决策支持系统自动生成")
+    set_run_font(r, "宋体", 11, False)
+    r.font.color.rgb = RGBColor(90, 90, 90)
 
-    add_heading(doc, "二、配套可视化图表", 1)
-    if date_col:
-        trend = build_trend(df, date_col, main_metric)
-        if len(trend) >= 2:
-            add_plotly_image_to_docx(doc, make_trend_figure_for_doc(trend, main_metric), f"图1 {main_metric}时间趋势")
-    if dimensions:
-        add_plotly_image_to_docx(doc, make_dimension_bar_for_doc(df, dimensions[0], main_metric), f"图2 按{dimensions[0]}的{main_metric}Top10")
-    if anomaly_df is not None and len(anomaly_df):
-        add_plotly_image_to_docx(doc, make_risk_bar_for_doc(anomaly_df), "图3 风险等级分布")
+    add_para(doc, f"本报告基于当前上传数据自动生成，主分析指标为“{main_metric}”，关注重点包括：{'、'.join(focus_list) if focus_list else '综合经营'}。报告内容已将 AI 生成正文、结构化表格和可视化分析整合到统一框架中。", indent=False)
+
+    add_markdown_body_to_docx(doc, ai_text, df, main_metric, dimensions, date_col, anomaly_df)
 
     bio = BytesIO()
     doc.save(bio)
@@ -1903,8 +2047,6 @@ def generate_report_docx(df, main_metric, dimensions, date_col, anomaly_df, focu
     add_para(doc, f"当前样本中，“{main_metric}”合计为 {money_fmt(df[main_metric].sum())}，均值为 {money_fmt(df[main_metric].mean())}，最大值为 {money_fmt(df[main_metric].max())}，最小值为 {money_fmt(df[main_metric].min())}。均值反映一般经营水平，最大值和最小值可帮助定位高值或低值经营单元。")
     if date_col:
         trend=build_trend(df,date_col,main_metric); add_heading(doc,"2.2 时间趋势分析",2); add_para(doc,trend_interpretation(trend,main_metric))
-        if len(trend)>=2:
-            add_plotly_image_to_docx(doc, make_trend_figure_for_doc(trend, main_metric), f"图1 {main_metric}时间趋势")
         if len(trend)>=3:
             recent=trend.tail(3); add_para(doc, f"最近三个周期分别为 {', '.join(recent['期间'].astype(str).tolist())}，对应数值为 {', '.join([money_fmt(v) for v in recent[main_metric].tolist()])}。建议重点关注最近一期相较前期的变化方向，以及是否与长期趋势一致。")
     elif dimensions:
@@ -1912,7 +2054,6 @@ def generate_report_docx(df, main_metric, dimensions, date_col, anomaly_df, focu
         add_heading(doc,"2.2 结构分布分析",2); add_para(doc, f"当前数据未选择有效日期字段，系统采用结构分析模式。从“{dim}”维度看，{top[dim]} 的 {main_metric} 合计最高，为 {money_fmt(top[f'{main_metric}合计'])}；{bottom[dim]} 的 {main_metric} 合计最低，为 {money_fmt(bottom[f'{main_metric}合计'])}。建议优先核查高值维度项的业务规模、资源投入或管理效率。")
     if dimensions:
         add_heading(doc,"2.3 多维结构分析",2)
-        add_plotly_image_to_docx(doc, make_dimension_bar_for_doc(df, dimensions[0], main_metric), f"图2 按{dimensions[0]}的{main_metric}Top10")
         for dim in dimensions[:3]:
             g=dimension_summary(df,dim,main_metric); top=g.iloc[0]
             add_para(doc, f"在“{dim}”维度下，{top[dim]} 的 {main_metric} 表现最高，合计为 {money_fmt(top[f'{main_metric}合计'])}，记录数为 {int(top['记录数'])}。如该维度项长期占比过高，应判断是正常规模优势，还是存在资源集中、费用集中或结构失衡。")
@@ -1920,7 +2061,6 @@ def generate_report_docx(df, main_metric, dimensions, date_col, anomaly_df, focu
     if anomaly_df is not None and len(anomaly_df):
         abnormal=anomaly_df[anomaly_df['是否经营异常']].copy(); high=abnormal[abnormal['风险等级']=='高风险']
         add_para(doc, f"系统基于主指标偏离、多指标组合偏离、动态业务规则和模型异常贡献识别异常经营单元。当前共识别出 {len(abnormal)} 个异常经营单元，其中高风险单元 {len(high)} 个。风险得分越高，说明该经营单元越需要优先核查。")
-        add_plotly_image_to_docx(doc, make_risk_bar_for_doc(anomaly_df), "图3 风险等级分布")
         top_anom=abnormal.sort_values('风险得分',ascending=False).head(5)
         if len(top_anom):
             add_heading(doc,"3.1 重点异常单元",2)
@@ -2195,6 +2335,13 @@ def numeric_validity_progress(numeric_report):
     if numeric_report is None or len(numeric_report) == 0:
         st.info("暂无数值转换检查结果。")
         return
+
+    st.markdown("#### 数值字段有效率")
+    st.markdown(
+        "用于判断金额、数量、利润等字段是否能被系统正确识别为数值。"
+        "有效率越高，后续图表、问数和风险识别结果越稳定。"
+    )
+
     rows = []
     for _, r in numeric_report.iterrows():
         field = r.get("字段", "")
@@ -2202,19 +2349,15 @@ def numeric_validity_progress(numeric_report):
         after = float(r.get("转换后有效数值数", 0))
         rate = after / before if before > 0 else 1
         rows.append((field, max(0, min(rate, 1))))
-    rows = sorted(rows, key=lambda x: x[1])
-    html = ['<div class="section-card"><h3>数值字段有效率</h3><p class="small-text">用于判断金额、数量、利润等字段是否能被系统正确识别为数值。有效率越高，后续图表和问数结果越稳定。</p>']
+    rows = sorted(rows, key=lambda x: x[1], reverse=True)
+
     for field, rate in rows[:12]:
-        html.append(f"""
-        <div class="progress-row">
-            <div class="progress-label"><span>{field}</span><span>{rate:.1%}</span></div>
-            <div class="progress-track"><div class="progress-fill" style="width:{rate*100:.1f}%"></div></div>
-        </div>
-        """)
-    html.append("</div>")
-    st.markdown("".join(html), unsafe_allow_html=True)
-
-
+        left, right = st.columns([5, 1])
+        with left:
+            st.markdown(f"**{field}**")
+        with right:
+            st.markdown(f"**{rate:.1%}**")
+        st.progress(float(rate))
 
 def chart_data_diagnostic(df, main_metric, numeric_cols, dimensions):
     rows = []
@@ -2377,9 +2520,16 @@ with tab2:
             line_chart(trend, "期间", main_metric, f"{main_metric}时间趋势")
         with c2:
             st.markdown(f'<div class="section-card"><h4>趋势解读</h4><p class="small-text">{trend_interpretation(trend, main_metric)}</p></div>', unsafe_allow_html=True)
-        with st.expander("查看动态趋势演示", expanded=False):
-            st.markdown('<div class="highlight-note">动态趋势演示按时间顺序逐步展示主指标轨迹，适合汇报时说明经营指标如何从起点演变到当前状态。</div>', unsafe_allow_html=True)
-            animated_trend_chart(trend, main_metric, f"{main_metric}动态趋势演示")
+
+        st.markdown("### 动态趋势演示")
+        st.markdown("""
+        <div class="highlight-note">
+        <b>显示条件：</b>只有当上传数据中存在有效日期字段、主指标可按时间汇总，且时间周期不少于 3 个时，系统才会生成动态图。
+        动态图按时间顺序逐步展开主指标轨迹，适合汇报时展示经营指标从起点到当前周期的变化过程；横轴只保留关键区间刻度，避免时间标签过密。
+        </div>
+        """, unsafe_allow_html=True)
+        animated_trend_chart(trend, main_metric, f"{main_metric}动态趋势演示")
+
         if selected_dimensions:
             st.markdown("### 分维度趋势对比")
             dc1, dc2, dc3 = st.columns([1.4, 1, 1.2])
@@ -2423,7 +2573,8 @@ with tab2:
     st.markdown("### 重点风险提示")
     st.markdown("""
     <div class="highlight-note">
-    <b>说明：</b>本处只承担“总览预警”作用，帮助管理者快速看到是否存在需要优先关注的高风险对象；详细的异常原因、风险得分构成和AI解释请进入“风险识别”页面下钻查看。
+    <b>说明：</b>经营态势页只承担“总览预警”作用，帮助管理者快速看到是否存在需要优先关注的高风险对象；
+    详细异常原因、风险得分构成和AI解释请进入“风险识别”页面下钻查看。
     </div>
     """, unsafe_allow_html=True)
     if len(anomaly_df):
@@ -2438,10 +2589,9 @@ with tab2:
                     "风险对象": obj,
                     "风险等级": row["风险等级"],
                     "风险得分": row["风险得分"],
-                    "简要原因": str(row["异常依据"])[:90] + ("..." if len(str(row["异常依据"])) > 90 else "")
+                    "简要原因": str(row["异常依据"])[:95] + ("..." if len(str(row["异常依据"])) > 95 else "")
                 })
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-            st.info("经营态势页仅展示Top 3风险摘要，避免与风险识别页重复；用户可在风险识别页查看完整异常依据、雷达图和AI行动建议。")
         else:
             st.success("当前未识别出明显中高风险经营单元。")
 
