@@ -24,6 +24,10 @@ import pandas as pd
 import requests
 import streamlit as st
 import plotly.graph_objects as go
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 
@@ -347,37 +351,6 @@ div[data-testid="stMarkdownContainer"] li {
     font-weight: 950;
     color: #10213F;
     margin: 10px 0 8px 0;
-}
-
-
-.qa-answer-card {
-    background: linear-gradient(135deg, #EAF4FF 0%, #FFFFFF 100%);
-    border: 1px solid #D6E8FF;
-    border-left: 7px solid #1E77D3;
-    border-radius: 20px;
-    padding: 18px 22px;
-    margin: 12px 0 16px 0;
-    box-shadow: 0 10px 24px rgba(30, 119, 211, .08);
-}
-.qa-answer-title {
-    font-size: 18px;
-    font-weight: 950;
-    color: #0B3A6A;
-    margin-bottom: 8px;
-}
-.qa-answer-text {
-    font-size: 19px;
-    font-weight: 700;
-    color: #10213F;
-    line-height: 1.8;
-}
-.qa-check-card {
-    background: #FFFFFF;
-    border: 1px solid #E5EBF3;
-    border-radius: 18px;
-    padding: 14px 18px;
-    margin: 8px 0 14px 0;
-    box-shadow: 0 8px 18px rgba(30,55,90,.05);
 }
 
 </style>
@@ -1366,7 +1339,7 @@ def animated_trend_chart(trend, metric, title=None):
     更清晰的动态趋势演示：
     1. 每一帧展示从起点到当前周期的累计轨迹；
     2. 横轴只显示少量区间刻度，避免时间标签密集重叠；
-    3. 单独高亮当前点，适合答辩演示。
+    3. 单独高亮当前点，增强趋势演变可读性。
     """
     if trend is None or len(trend) < 3 or "期间" not in trend.columns or metric not in trend.columns:
         st.info("当前未生成动态图：需要有效日期字段，并且时间周期不少于 3 个。")
@@ -1648,31 +1621,61 @@ def add_markdown_body_to_docx(doc, text, df, main_metric, dimensions, date_col, 
         add_risk_visual_table(doc, anomaly_df)
 
 
+
 def generate_ai_report_docx(ai_text, df, main_metric, dimensions, date_col, anomaly_df, focus_list):
     if not DOCX_AVAILABLE:
         raise RuntimeError("未安装 python-docx，请先安装：python -m pip install python-docx")
 
     doc = Document()
-    title = doc.add_paragraph()
-    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = title.add_run("智策经营——AI增强版决策简报")
-    set_run_font(r, "黑体", 20, True)
+    title = doc.add_paragraph(); title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = title.add_run("智策经营——AI增强版决策简报"); set_run_font(r, "黑体", 20, True)
+    subtitle = doc.add_paragraph(); subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = subtitle.add_run("AI 驱动的多维经营分析与决策支持系统自动生成"); set_run_font(r, "宋体", 11, False); r.font.color.rgb = RGBColor(90,90,90)
 
-    subtitle = doc.add_paragraph()
-    subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = subtitle.add_run("AI 驱动的多维经营分析与决策支持系统自动生成")
-    set_run_font(r, "宋体", 11, False)
-    r.font.color.rgb = RGBColor(90, 90, 90)
+    add_heading(doc, "一、分析概况", 1)
+    add_para(doc, f"本报告基于当前上传数据自动生成，主分析指标为“{main_metric}”，清洗后数据共 {len(df):,} 条记录。系统先基于规则和统计方法生成核心图表，再结合大模型输出经营解读和管理建议。", indent=False)
+    if focus_list:
+        add_para(doc, f"本次关注重点包括：{'、'.join(focus_list)}。", indent=False)
 
-    add_para(doc, f"本报告基于当前上传数据自动生成，主分析指标为“{main_metric}”，关注重点包括：{'、'.join(focus_list) if focus_list else '综合经营'}。报告内容已将 AI 生成正文、结构化表格和可视化分析整合到统一框架中。", indent=False)
+    add_heading(doc, "二、核心经营表现与可视化", 1)
+    add_para(doc, f"“{main_metric}”合计为 {money_fmt(df[main_metric].sum())}，均值为 {money_fmt(df[main_metric].mean())}，最大值为 {money_fmt(df[main_metric].max())}，最小值为 {money_fmt(df[main_metric].min())}。", indent=True)
+    if date_col:
+        trend = build_trend(df, date_col, main_metric)
+        add_para(doc, trend_interpretation(trend, main_metric), indent=True)
+        if len(trend) >= 2:
+            add_mpl_figure_to_docx(doc, make_mpl_trend_figure(trend, main_metric), f"图1 {main_metric}时间趋势")
+    else:
+        add_para(doc, "当前未选择有效日期字段，系统采用结构分布图观察主指标集中程度和离散情况。", indent=True)
+        add_mpl_figure_to_docx(doc, make_mpl_distribution_figure(df, main_metric), f"图1 {main_metric}分布情况")
 
+    if dimensions:
+        add_heading(doc, "三、多维结构分析", 1)
+        add_mpl_figure_to_docx(doc, make_mpl_dimension_bar_figure(df, dimensions[0], main_metric), f"图2 按{dimensions[0]}汇总{main_metric}")
+        g = dimension_summary(df, dimensions[0], main_metric)
+        if len(g):
+            top = g.iloc[0]
+            add_para(doc, f"从“{dimensions[0]}”维度看，{top[dimensions[0]]} 的 {main_metric} 合计最高，为 {money_fmt(top[f'{main_metric}合计'])}。该维度项可作为后续重点下钻对象。")
+
+    add_heading(doc, "四、风险识别与异常诊断", 1)
+    if anomaly_df is not None and len(anomaly_df):
+        abnormal = anomaly_df[anomaly_df["是否经营异常"]].copy() if "是否经营异常" in anomaly_df.columns else pd.DataFrame()
+        high_n = int((abnormal.get("风险等级", pd.Series(dtype=str)) == "高风险").sum()) if len(abnormal) else 0
+        add_para(doc, f"系统当前识别出 {len(abnormal)} 个异常经营单元，其中高风险单元 {high_n} 个。风险识别结果用于提示优先核查对象。")
+        add_mpl_figure_to_docx(doc, make_mpl_risk_figure(anomaly_df), "图3 风险等级分布")
+        if len(abnormal):
+            top_anom = abnormal.sort_values("风险得分", ascending=False).head(5)
+            cols = [c for c in ["风险等级", "风险得分", "异常依据"] if c in top_anom.columns]
+            add_dataframe_to_docx(doc, top_anom[cols], max_rows=5)
+    else:
+        add_para(doc, "当前数据暂未形成稳定的异常诊断结果。")
+
+    add_heading(doc, "五、AI增强解读与管理建议", 1)
     add_markdown_body_to_docx(doc, ai_text, df, main_metric, dimensions, date_col, anomaly_df)
 
     bio = BytesIO()
     doc.save(bio)
     bio.seek(0)
     return bio
-
 
 # ============================================================
 # 3. 异常诊断
@@ -1890,201 +1893,6 @@ def build_schema_text(df, meta=None):
     return "\n".join(lines)
 
 
-
-def build_schema_text_enhanced(raw_df, sql_df, meta=None):
-    """
-    给大模型提供“标准SQL字段名 + 原始字段名 + 字段语义 + 示例值”，
-    避免模型只看到规范化字段名后误解业务含义。
-    """
-    meta_map = {}
-    if meta is not None and isinstance(meta, pd.DataFrame) and "字段名" in meta.columns:
-        meta_map = {str(r["字段名"]): r.to_dict() for _, r in meta.iterrows()}
-
-    lines = []
-    for raw_col, sql_col in zip(raw_df.columns, sql_df.columns):
-        dtype = str(sql_df[sql_col].dtype)
-        samples = sql_df[sql_col].dropna().astype(str).head(3).tolist()
-        m = meta_map.get(str(raw_col), {})
-        meaning = m.get("字段含义解释", "")
-        role = m.get("推荐角色", "")
-        agg = m.get("推荐聚合方式", "")
-        lines.append(
-            f"- SQL字段：{sql_col}｜原始字段：{raw_col}｜类型：{dtype}｜推荐角色：{role}｜推荐聚合：{agg}｜含义：{meaning}｜示例：{samples}"
-        )
-    return "\n".join(lines)
-
-
-def _find_best_column_by_keywords(columns, keywords):
-    for kw in keywords:
-        for c in columns:
-            if kw.lower() in str(c).lower():
-                return c
-    return None
-
-
-def infer_question_parse(question, raw_df, sql_df, meta=None):
-    """
-    对自然语言问题做轻量级口径解析。它不替代大模型，而是给模型和用户一个可追溯的分析口径。
-    """
-    q = str(question)
-    raw_cols = list(raw_df.columns)
-    sql_cols = list(sql_df.columns)
-    raw_to_sql = {str(raw): str(sql) for raw, sql in zip(raw_cols, sql_cols)}
-
-    # 候选字段
-    amount_cols = [c for c in raw_cols if is_amount_like(c)]
-    qty_cols = [c for c in raw_cols if is_quantity_like(c)]
-    rate_cols = [c for c in raw_cols if is_rate_like(c)]
-    dim_cols = [c for c in raw_cols if c not in amount_cols + qty_cols + rate_cols and not is_id_like(c)]
-    product_col = _find_best_column_by_keywords(raw_cols, ["产品名称", "商品名称", "产品", "商品", "sku", "SKU", "品类", "类别", "子类别"])
-    customer_col = _find_best_column_by_keywords(raw_cols, ["客户名称", "客户", "顾客"])
-    region_col = _find_best_column_by_keywords(raw_cols, ["地区", "区域", "省", "城市", "国家"])
-    date_col = _find_best_column_by_keywords(raw_cols, ["日期", "时间", "月份", "date", "month", "period"])
-
-    metric_raw = None
-    metric_reason = ""
-    if re.search(r"销售量|销量|销售数量|卖出数量|数量", q):
-        metric_raw = _find_best_column_by_keywords(qty_cols, ["数量", "quantity", "qty", "count", "number"]) or (qty_cols[0] if qty_cols else None)
-        metric_reason = "问题中出现“销售量/数量”等表达，优先理解为数量类字段的合计。"
-    elif re.search(r"销售额|销售金额|收入|营收|金额", q):
-        metric_raw = _find_best_column_by_keywords(amount_cols, ["销售额", "销售", "收入", "revenue", "sales", "amount"]) or (amount_cols[0] if amount_cols else None)
-        metric_reason = "问题中出现“销售额/收入/金额”等表达，优先理解为金额类字段的合计。"
-    elif re.search(r"利润|收益", q):
-        metric_raw = _find_best_column_by_keywords(amount_cols, ["利润", "profit", "收益"]) or (amount_cols[0] if amount_cols else None)
-        metric_reason = "问题中出现“利润/收益”等表达，优先理解为利润或收益类字段。"
-    elif re.search(r"成本|费用|支出", q):
-        metric_raw = _find_best_column_by_keywords(amount_cols, ["成本", "费用", "支出", "cost", "expense"]) or (amount_cols[0] if amount_cols else None)
-        metric_reason = "问题中出现“成本/费用/支出”等表达，优先理解为成本费用类字段。"
-
-    dim_raw = None
-    dim_reason = ""
-    if re.search(r"产品|商品|SKU|sku|品类|类别", q):
-        dim_raw = product_col
-        dim_reason = "问题中出现“产品/商品/SKU/类别”等表达，优先按产品或商品相关字段分组。"
-    elif re.search(r"客户|顾客", q):
-        dim_raw = customer_col
-        dim_reason = "问题中出现“客户/顾客”等表达，优先按客户相关字段分组。"
-    elif re.search(r"地区|区域|省|城市|国家", q):
-        dim_raw = region_col
-        dim_reason = "问题中出现“地区/区域/省/城市”等表达，优先按地域字段分组。"
-    elif len(dim_cols):
-        # 问题涉及最高、排名但没有明确维度时，给出一个常见维度作为参考
-        if re.search(r"最高|最低|排名|前\d+|top", q, flags=re.I):
-            dim_raw = dim_cols[0]
-            dim_reason = "问题涉及排名或最高/最低，但未明确分组字段，系统根据字段类型推荐一个可分组维度。"
-
-    order = "降序" if re.search(r"最高|最大|最多|前\d+|top", q, flags=re.I) else ("升序" if re.search(r"最低|最小|最少", q) else "按问题语义确定")
-    agg = "求和" if metric_raw and not is_rate_like(metric_raw) else ("平均" if metric_raw and is_rate_like(metric_raw) else "按问题语义确定")
-    limit = 1 if re.search(r"是什么|哪一个|最高|最低|最大|最小|最多|最少", q) and not re.search(r"前\d+|top\s*\d+", q, flags=re.I) else None
-
-    parsed = {
-        "指标字段": metric_raw or "由模型结合问题判断",
-        "SQL指标字段": raw_to_sql.get(metric_raw, "") if metric_raw else "",
-        "分组字段": dim_raw or "由模型结合问题判断",
-        "SQL分组字段": raw_to_sql.get(dim_raw, "") if dim_raw else "",
-        "聚合方式": agg,
-        "排序方式": order,
-        "返回范围": f"Top {limit}" if limit else "按问题要求返回",
-        "查询范围": "当前上传数据全表",
-        "解析依据": "；".join([x for x in [metric_reason, dim_reason] if x]) or "系统根据字段名称、字段类型和问题关键词生成口径建议。"
-    }
-
-    hint_lines = [
-        f"问题解析口径建议：",
-        f"- 指标字段：{parsed['指标字段']}（SQL字段：{parsed['SQL指标字段']}）",
-        f"- 分组字段：{parsed['分组字段']}（SQL字段：{parsed['SQL分组字段']}）",
-        f"- 聚合方式：{parsed['聚合方式']}",
-        f"- 排序方式：{parsed['排序方式']}",
-        f"- 返回范围：{parsed['返回范围']}",
-        f"- 解析依据：{parsed['解析依据']}",
-        "若该口径与用户问题不冲突，请优先采用；若不适用，请说明并使用更合理字段。"
-    ]
-    return parsed, "\n".join(hint_lines)
-
-
-def make_result_direct_summary(question, result_df, parse_info):
-    """在模型解释之外，先用数据库执行结果生成一个确定性的直接答案，减少模型幻觉。"""
-    if result_df is None or not isinstance(result_df, pd.DataFrame) or result_df.empty:
-        return "当前查询未返回结果，建议检查问题口径或更换查询条件。"
-
-    row = result_df.iloc[0].to_dict()
-    items = list(row.items())
-    if len(items) == 1:
-        k, v = items[0]
-        return f"根据当前查询结果，{k} 为 {money_fmt(v) if isinstance(v, (int, float, np.number)) else v}。"
-    # 优先展示第一列对象 + 第二列指标
-    k1, v1 = items[0]
-    k2, v2 = items[1]
-    v2_fmt = money_fmt(v2) if isinstance(v2, (int, float, np.number)) else v2
-    return f"根据当前查询结果，{k1} 为“{v1}”的记录排名靠前，其 {k2} 为 {v2_fmt}。"
-
-
-def extract_direct_answer(explanation, fallback):
-    if not explanation:
-        return fallback
-    text = str(explanation).strip()
-    m = re.search(r"【直接回答】\s*(.*)", text)
-    if m:
-        line = m.group(1).strip()
-        if line:
-            return line
-    # fallback to first non-empty line but remove headings
-    for line in text.splitlines():
-        line = line.strip().lstrip("#").strip()
-        if not line:
-            continue
-        line = re.sub(r"^(直接回答|查询结论|结论)[：:]\s*", "", line)
-        if len(line) > 5:
-            return line[:220]
-    return fallback
-
-
-def build_sql_validation_info(ok, result_df, sql, parse_info, columns, error=""):
-    sql_text = str(sql)
-    expected = []
-    for k in ["SQL指标字段", "SQL分组字段"]:
-        v = parse_info.get(k, "")
-        if v:
-            expected.append(v)
-    used_expected = [c for c in expected if c and str(c).lower() in sql_text.lower()]
-    used_all = [c for c in columns if str(c).lower() in sql_text.lower()]
-    agg_ok = "SUM(" in sql_text.upper() if parse_info.get("聚合方式") == "求和" else True
-    group_ok = ("GROUP BY" in sql_text.upper()) if parse_info.get("分组字段") not in ["", "由模型结合问题判断"] else True
-
-    if ok and len(result_df) > 0 and (not expected or len(used_expected) >= min(1, len(expected))):
-        credibility = "较高"
-    elif ok:
-        credibility = "中等"
-    else:
-        credibility = "较低"
-
-    return {
-        "SQL安全性": "通过" if is_safe_select_sql(sql)[0] else "未通过",
-        "SQL可执行": "是" if ok else "否",
-        "结果行数": int(len(result_df)) if isinstance(result_df, pd.DataFrame) else 0,
-        "字段匹配": "、".join(used_expected) if used_expected else ("未命中口径建议字段" if expected else "未设置口径建议字段"),
-        "实际使用字段": "、".join(used_all[:8]) if used_all else "未识别",
-        "聚合逻辑": "包含求和聚合" if agg_ok and "SUM(" in sql_text.upper() else ("无需聚合或由SQL决定" if agg_ok else "可能未按建议聚合"),
-        "分组逻辑": "包含分组" if group_ok and "GROUP BY" in sql_text.upper() else ("无需分组或由SQL决定" if group_ok else "可能未按建议分组"),
-        "综合可信度": credibility,
-        "错误信息": error or ""
-    }
-
-
-def render_parse_info(parse_info):
-    show = pd.DataFrame([
-        {"项目": "指标理解", "内容": f"{parse_info.get('指标字段')}；聚合方式：{parse_info.get('聚合方式')}"},
-        {"项目": "分组理解", "内容": f"{parse_info.get('分组字段')}；排序方式：{parse_info.get('排序方式')}"},
-        {"项目": "查询范围", "内容": f"{parse_info.get('查询范围')}；返回范围：{parse_info.get('返回范围')}"},
-        {"项目": "解析依据", "内容": parse_info.get("解析依据", "")}
-    ])
-    st.dataframe(show, use_container_width=True, hide_index=True)
-
-
-def render_validation_info(validation):
-    show = pd.DataFrame([{"校验项": k, "结果": v} for k, v in validation.items() if k != "错误信息" or v])
-    st.dataframe(show, use_container_width=True, hide_index=True)
-
 def extract_sql(text):
     if not text:
         return ""
@@ -2154,13 +1962,11 @@ def score_llm_query(ok, result_df, sql, explanation, elapsed, columns):
     return min(int(score), 100), detail
 
 
-
 def run_llm_sql_question(provider, question, df, meta):
     sql_df = to_sqlite_df(df)
     con = sqlite3.connect(":memory:")
     sql_df.to_sql("data", con, index=False, if_exists="replace")
-    schema = build_schema_text_enhanced(df, sql_df, meta)
-    parse_info, parse_hint = infer_question_parse(question, df, sql_df, meta)
+    schema = build_schema_text(sql_df, meta=None)
 
     system_prompt = """
 你是一个严谨的数据分析 SQL 助手。你的任务是把用户的自然语言问题转换为 SQLite SELECT 查询语句。
@@ -2168,33 +1974,19 @@ def run_llm_sql_question(provider, question, df, meta):
 1. 只输出 SQL，不要解释；
 2. 表名固定为 data；
 3. 只能使用 SELECT；
-4. 字段名必须严格来自字段信息中的“SQL字段”，中文或特殊字段名请使用双引号；
-5. 若问题涉及“销售量/销量/销售数量”，通常应优先使用数量类字段求和，而不是销售额；
-6. 若问题涉及“产品/商品/SKU”，通常应优先使用产品或商品相关字段分组；
-7. 若问题涉及排名、最高、最低，请使用 ORDER BY；
-8. 若问题涉及分组统计，请使用 GROUP BY；
-9. 尽量使用 LIMIT 控制输出，用户问“最高是什么/哪一个最高”时一般 LIMIT 1。
+4. 字段名必须严格来自字段信息，中文或特殊字段名请使用双引号；
+5. 尽量使用 LIMIT 20 控制输出；
+6. 若问题涉及排名、最高、最低，请使用 ORDER BY；
+7. 若问题涉及分组统计，请使用 GROUP BY。
 """
-    user_prompt = f"""字段信息：
-{schema}
-
-{parse_hint}
-
-用户问题：{question}
-
-请生成 SQLite SELECT 查询语句。"""
+    user_prompt = f"字段信息：\n{schema}\n\n用户问题：{question}\n\n请生成 SQLite SELECT 查询语句。"
     content, elapsed = call_llm(provider, system_prompt, user_prompt, temperature=0)
     sql = extract_sql(content)
 
     safe, reason = is_safe_select_sql(sql)
     if not safe:
-        validation = build_sql_validation_info(False, pd.DataFrame(), sql, parse_info, sql_df.columns, reason)
         score, detail = score_llm_query(False, pd.DataFrame(), sql, "", elapsed, sql_df.columns)
-        return {
-            "模型": provider, "SQL": sql, "是否成功": False, "错误信息": reason, "结果": pd.DataFrame(),
-            "解释": "", "直接回答": "本次查询未成功，暂无法给出可靠答案。", "口径解释": parse_info,
-            "校验信息": validation, "响应时间": elapsed, "综合评分": score, "评分明细": detail
-        }
+        return {"模型": provider, "SQL": sql, "是否成功": False, "错误信息": reason, "结果": pd.DataFrame(), "解释": "", "响应时间": elapsed, "综合评分": score, "评分明细": detail}
 
     try:
         result = pd.read_sql_query(sql, con)
@@ -2203,55 +1995,17 @@ def run_llm_sql_question(provider, question, df, meta):
         result = pd.DataFrame()
         ok, error = False, str(e)
 
-    fallback_answer = make_result_direct_summary(question, result, parse_info) if ok else "本次查询未成功，暂无法给出可靠答案。"
-    validation = build_sql_validation_info(ok, result, sql, parse_info, sql_df.columns, error)
-
     explanation = ""
-    direct_answer = fallback_answer
     if ok:
         try:
-            exp_system = "你是一名严谨的经营数据分析顾问。你必须基于SQL查询结果回答，不能编造结果。"
-            exp_user = f"""
-用户问题：{question}
-系统解析口径：{json.dumps(parse_info, ensure_ascii=False)}
-SQL：{sql}
-查询结果：
-{result.head(20).to_markdown(index=False)}
-
-请用中文输出：
-【直接回答】用一句话直接回答用户问题，必须引用查询结果中的对象和值。
-【口径说明】说明本次把问题中的关键词理解成哪些字段、采用什么聚合和排序。
-【经营含义】解释这个结果对经营管理有什么含义。
-【后续建议】给出1-2条可执行建议。
-"""
-            explanation, _ = call_llm(provider, exp_system, exp_user, temperature=0.15)
-            direct_answer = extract_direct_answer(explanation, fallback_answer)
+            exp_system = "你是一名经营数据分析顾问。请根据查询结果，用中文简洁解释结论、经营含义和建议。"
+            exp_user = f"用户问题：{question}\nSQL：{sql}\n查询结果：\n{result.head(20).to_markdown(index=False)}\n\n请输出：1. 查询结论；2. 经营含义；3. 后续建议。"
+            explanation, _ = call_llm(provider, exp_system, exp_user, temperature=0.2)
         except Exception as e:
             explanation = f"SQL 已执行成功，但结果解释生成失败：{e}"
-            direct_answer = fallback_answer
 
     score, detail = score_llm_query(ok, result, sql, explanation, elapsed, sql_df.columns)
-
-    # 字段口径命中加一点说明，不直接篡改模型结果
-    if validation.get("字段匹配") == "未命中口径建议字段":
-        detail["口径一致性提示"] = "生成SQL未明显使用系统推荐的口径字段，建议人工核对。"
-    else:
-        detail["口径一致性提示"] = "生成SQL与系统推荐口径基本一致。"
-
-    return {
-        "模型": provider,
-        "SQL": sql,
-        "是否成功": ok,
-        "错误信息": error,
-        "结果": result,
-        "解释": explanation,
-        "直接回答": direct_answer,
-        "口径解释": parse_info,
-        "校验信息": validation,
-        "响应时间": elapsed,
-        "综合评分": score,
-        "评分明细": detail
-    }
+    return {"模型": provider, "SQL": sql, "是否成功": ok, "错误信息": error, "结果": result, "解释": explanation, "响应时间": elapsed, "综合评分": score, "评分明细": detail}
 
 
 def generate_dynamic_questions(main_metric, dimensions, numeric_cols, date_col):
@@ -2308,6 +2062,193 @@ def add_para(doc, text, indent=True):
 
 
 
+
+
+# ---------- Word 图表导出工具：用于管理层简报中的真实可视化 ----------
+def _pick_mpl_chinese_font():
+    """尽量选择可用中文字体，避免 Word 图表中文乱码；找不到时仍可生成图表，并在正文中解释。"""
+    candidates = [
+        r"C:\Windows\Fonts\msyh.ttc", r"C:\Windows\Fonts\simhei.ttf", r"C:\Windows\Fonts\simsun.ttc",
+        "/System/Library/Fonts/PingFang.ttc", "/System/Library/Fonts/STHeiti Light.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/truetype/arphic/ukai.ttc",
+    ]
+    for fp in candidates:
+        if os.path.exists(fp):
+            try:
+                from matplotlib import font_manager
+                font_manager.fontManager.addfont(fp)
+                return font_manager.FontProperties(fname=fp).get_name()
+            except Exception:
+                continue
+    return None
+
+
+def _setup_mpl_style():
+    font_name = _pick_mpl_chinese_font()
+    if font_name:
+        plt.rcParams["font.sans-serif"] = [font_name, "Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"]
+    else:
+        plt.rcParams["font.sans-serif"] = ["DejaVu Sans"]
+    plt.rcParams["axes.unicode_minus"] = False
+    plt.rcParams["figure.facecolor"] = "white"
+    plt.rcParams["axes.facecolor"] = "white"
+
+
+def _short_label(x, max_len=14):
+    s = str(x)
+    return s if len(s) <= max_len else s[:max_len] + "…"
+
+
+def _mpl_money_axis(x, pos=None):
+    try:
+        x = float(x)
+    except Exception:
+        return str(x)
+    if abs(x) >= 100000000:
+        return f"{x/100000000:.1f}亿"
+    if abs(x) >= 10000:
+        return f"{x/10000:.0f}万"
+    return f"{x:.0f}"
+
+
+def add_mpl_figure_to_docx(doc, fig, caption):
+    """把 Matplotlib 图表以 PNG 插入 Word。"""
+    try:
+        img = BytesIO()
+        fig.savefig(img, format="png", dpi=180, bbox_inches="tight", facecolor="white")
+        plt.close(fig)
+        img.seek(0)
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run(caption)
+        set_run_font(run, "黑体", 10, True)
+        doc.add_picture(img, width=Inches(6.2))
+        return True
+    except Exception as e:
+        try:
+            plt.close(fig)
+        except Exception:
+            pass
+        add_para(doc, f"图表“{caption}”生成失败：{e}。", indent=False)
+        return False
+
+
+def make_mpl_trend_figure(trend, metric):
+    _setup_mpl_style()
+    fig, ax = plt.subplots(figsize=(8.8, 4.6))
+    plot = trend.copy()
+    plot[metric] = pd.to_numeric(plot[metric], errors="coerce")
+    plot = plot.dropna(subset=["期间", metric])
+    xs = list(range(len(plot)))
+    ys = plot[metric].astype(float).tolist()
+    ax.plot(xs, ys, linewidth=2.8, marker="o", markersize=4.8)
+    ax.fill_between(xs, ys, alpha=0.10)
+    if len(xs) > 0:
+        max_i = int(np.nanargmax(ys)); min_i = int(np.nanargmin(ys))
+        ax.scatter([max_i], [ys[max_i]], s=78, zorder=4)
+        ax.scatter([min_i], [ys[min_i]], s=78, zorder=4)
+        ax.annotate(f"最高 {money_fmt(ys[max_i])}", (max_i, ys[max_i]), xytext=(0, 12), textcoords="offset points", ha="center", fontsize=9)
+        ax.annotate(f"最低 {money_fmt(ys[min_i])}", (min_i, ys[min_i]), xytext=(0, -18), textcoords="offset points", ha="center", fontsize=9)
+    periods = plot["期间"].astype(str).tolist()
+    if len(periods) > 8:
+        step = max(1, int(np.ceil(len(periods) / 8)))
+        tick_idx = list(range(0, len(periods), step))
+        if len(periods)-1 not in tick_idx:
+            tick_idx.append(len(periods)-1)
+    else:
+        tick_idx = list(range(len(periods)))
+    ax.set_xticks(tick_idx)
+    ax.set_xticklabels([periods[i] for i in tick_idx], rotation=0, fontsize=9)
+    ax.yaxis.set_major_formatter(FuncFormatter(_mpl_money_axis))
+    ax.set_title(f"{metric}时间趋势", fontsize=14, fontweight="bold", loc="left")
+    ax.set_xlabel("期间")
+    ax.set_ylabel(metric)
+    ax.grid(axis="y", alpha=0.25)
+    ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+    fig.tight_layout()
+    return fig
+
+
+def make_mpl_dimension_bar_figure(df, dim, metric, topn=10):
+    _setup_mpl_style()
+    g = dimension_summary(df, dim, metric).head(topn).copy()
+    g[f"{metric}合计"] = pd.to_numeric(g[f"{metric}合计"], errors="coerce").fillna(0)
+    # 横向条形图从小到大绘制，显示时最大值在上方
+    g = g.sort_values(f"{metric}合计", ascending=True)
+    fig, ax = plt.subplots(figsize=(8.8, max(4.2, 0.42 * len(g) + 1.2)))
+    labels = [_short_label(v, 16) for v in g[dim].astype(str).tolist()]
+    vals = g[f"{metric}合计"].astype(float).tolist()
+    bars = ax.barh(labels, vals, height=0.62)
+    ax.xaxis.set_major_formatter(FuncFormatter(_mpl_money_axis))
+    ax.set_title(f"按{dim}汇总{metric}", fontsize=14, fontweight="bold", loc="left")
+    ax.set_xlabel(f"{metric}合计")
+    ax.grid(axis="x", alpha=0.22)
+    ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+    max_val = max([abs(v) for v in vals] + [1])
+    for bar, val in zip(bars, vals):
+        ax.text(val + max_val * 0.015, bar.get_y() + bar.get_height()/2, money_fmt(val), va="center", fontsize=9)
+    fig.tight_layout()
+    return fig
+
+
+def make_mpl_distribution_figure(df, metric):
+    _setup_mpl_style()
+    s = to_finite_numeric_series(df, metric)
+    fig, ax = plt.subplots(figsize=(8.8, 4.4))
+    if len(s) > 0:
+        ax.hist(s.astype(float).tolist(), bins=min(30, max(8, int(np.sqrt(len(s))))), alpha=0.86)
+        ax.axvline(float(s.mean()), linestyle="--", linewidth=2, label="均值")
+        ax.legend(fontsize=9)
+    ax.xaxis.set_major_formatter(FuncFormatter(_mpl_money_axis))
+    ax.set_title(f"{metric}分布情况", fontsize=14, fontweight="bold", loc="left")
+    ax.set_xlabel(metric); ax.set_ylabel("记录数")
+    ax.grid(axis="y", alpha=0.22)
+    ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+    fig.tight_layout()
+    return fig
+
+
+def make_mpl_risk_figure(anomaly_df):
+    _setup_mpl_style()
+    fig, ax = plt.subplots(figsize=(8.0, 4.2))
+    if anomaly_df is not None and len(anomaly_df) and "风险等级" in anomaly_df.columns:
+        order = ["高风险", "中风险", "低风险", "正常"]
+        counts = anomaly_df["风险等级"].value_counts()
+        labels = [x for x in order if x in counts.index] + [x for x in counts.index if x not in order]
+        vals = [int(counts.get(x, 0)) for x in labels]
+        bars = ax.bar(labels, vals, width=0.55)
+        for bar, val in zip(bars, vals):
+            ax.text(bar.get_x() + bar.get_width()/2, val + max(vals + [1])*0.02, str(val), ha="center", fontsize=10)
+    ax.set_title("风险等级分布", fontsize=14, fontweight="bold", loc="left")
+    ax.set_xlabel("风险等级"); ax.set_ylabel("经营单元数")
+    ax.grid(axis="y", alpha=0.22)
+    ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+    fig.tight_layout()
+    return fig
+
+
+def add_core_visuals_to_docx(doc, df, main_metric, dimensions, date_col, anomaly_df):
+    """在 Word 简报中插入核心可视化：趋势/分布、维度结构、风险分布。"""
+    inserted = 0
+    if date_col:
+        trend = build_trend(df, date_col, main_metric)
+        if trend is not None and len(trend) >= 2:
+            add_mpl_figure_to_docx(doc, make_mpl_trend_figure(trend, main_metric), f"图1 {main_metric}时间趋势")
+            inserted += 1
+    if inserted == 0:
+        add_mpl_figure_to_docx(doc, make_mpl_distribution_figure(df, main_metric), f"图1 {main_metric}分布情况")
+        inserted += 1
+    if dimensions:
+        add_mpl_figure_to_docx(doc, make_mpl_dimension_bar_figure(df, dimensions[0], main_metric), f"图2 按{dimensions[0]}汇总{main_metric}")
+        inserted += 1
+    if anomaly_df is not None and len(anomaly_df):
+        add_mpl_figure_to_docx(doc, make_mpl_risk_figure(anomaly_df), "图3 风险等级分布")
+        inserted += 1
+    return inserted
+
 def generate_report_docx(df, main_metric, dimensions, date_col, anomaly_df, focus_list):
     if not DOCX_AVAILABLE:
         raise RuntimeError("未安装 python-docx，请先安装：python -m pip install python-docx")
@@ -2316,44 +2257,70 @@ def generate_report_docx(df, main_metric, dimensions, date_col, anomaly_df, focu
     r = title.add_run("智策经营——管理层决策简报"); set_run_font(r, "黑体", 20, True)
     subtitle = doc.add_paragraph(); subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r = subtitle.add_run("AI 驱动的多维经营分析与决策支持系统自动生成"); set_run_font(r, "宋体", 11, False); r.font.color.rgb = RGBColor(90,90,90)
-    add_heading(doc,"一、分析概况",1); add_heading(doc,"1.1 数据范围与分析口径",2)
+
+    add_heading(doc,"一、分析概况",1)
+    add_heading(doc,"1.1 数据范围与分析口径",2)
     add_para(doc, f"本报告基于用户上传的数据自动生成。当前清洗后数据共包含 {len(df):,} 条记录，主分析指标为“{main_metric}”。系统根据数据中实际存在的字段进行分析，不会引用未上传或不存在的指标。")
+    if focus_list:
+        add_para(doc, f"本次简报关注重点包括：{'、'.join(focus_list)}。")
+
     add_heading(doc,"1.2 核心指标摘要",2)
-    table=doc.add_table(rows=1, cols=2); table.alignment=WD_TABLE_ALIGNMENT.CENTER; table.rows[0].cells[0].text='指标'; table.rows[0].cells[1].text='数值'
+    table=doc.add_table(rows=1, cols=2); table.alignment=WD_TABLE_ALIGNMENT.CENTER; table.style="Table Grid"
+    table.rows[0].cells[0].text='指标'; table.rows[0].cells[1].text='数值'
     abnormal_n = int((anomaly_df['是否经营异常']).sum()) if anomaly_df is not None and len(anomaly_df) else 0
     for k,v in [(f'{main_metric}合计',money_fmt(df[main_metric].sum())),(f'{main_metric}均值',money_fmt(df[main_metric].mean())),(f'{main_metric}最大值',money_fmt(df[main_metric].max())),(f'{main_metric}最小值',money_fmt(df[main_metric].min())),('数据记录数',f'{len(df):,}'),('异常经营单元数',str(abnormal_n))]:
         cells=table.add_row().cells; cells[0].text=k; cells[1].text=v
-    add_heading(doc,"二、核心经营表现",1); add_heading(doc,"2.1 总体表现",2)
+
+    add_heading(doc,"二、核心经营表现",1)
+    add_heading(doc,"2.1 总体表现",2)
     add_para(doc, f"当前样本中，“{main_metric}”合计为 {money_fmt(df[main_metric].sum())}，均值为 {money_fmt(df[main_metric].mean())}，最大值为 {money_fmt(df[main_metric].max())}，最小值为 {money_fmt(df[main_metric].min())}。均值反映一般经营水平，最大值和最小值可帮助定位高值或低值经营单元。")
+
     if date_col:
-        trend=build_trend(df,date_col,main_metric); add_heading(doc,"2.2 时间趋势分析",2); add_para(doc,trend_interpretation(trend,main_metric))
+        trend=build_trend(df,date_col,main_metric)
+        add_heading(doc,"2.2 时间趋势分析",2)
+        add_para(doc,trend_interpretation(trend,main_metric))
+        if len(trend)>=2:
+            add_mpl_figure_to_docx(doc, make_mpl_trend_figure(trend, main_metric), f"图1 {main_metric}时间趋势")
         if len(trend)>=3:
-            recent=trend.tail(3); add_para(doc, f"最近三个周期分别为 {', '.join(recent['期间'].astype(str).tolist())}，对应数值为 {', '.join([money_fmt(v) for v in recent[main_metric].tolist()])}。建议重点关注最近一期相较前期的变化方向，以及是否与长期趋势一致。")
-    elif dimensions:
-        dim=dimensions[0]; g=dimension_summary(df,dim,main_metric); top=g.iloc[0]; bottom=g.iloc[-1]
-        add_heading(doc,"2.2 结构分布分析",2); add_para(doc, f"当前数据未选择有效日期字段，系统采用结构分析模式。从“{dim}”维度看，{top[dim]} 的 {main_metric} 合计最高，为 {money_fmt(top[f'{main_metric}合计'])}；{bottom[dim]} 的 {main_metric} 合计最低，为 {money_fmt(bottom[f'{main_metric}合计'])}。建议优先核查高值维度项的业务规模、资源投入或管理效率。")
+            recent=trend.tail(3)
+            add_para(doc, f"最近三个周期分别为 {', '.join(recent['期间'].astype(str).tolist())}，对应数值为 {', '.join([money_fmt(v) for v in recent[main_metric].tolist()])}。建议重点关注最近一期相较前期的变化方向，以及是否与长期趋势一致。")
+    else:
+        add_heading(doc,"2.2 结构分布分析",2)
+        add_para(doc, f"当前未选择有效日期字段，系统采用结构分布方式观察“{main_metric}”的集中程度和离散情况。")
+        add_mpl_figure_to_docx(doc, make_mpl_distribution_figure(df, main_metric), f"图1 {main_metric}分布情况")
+
     if dimensions:
         add_heading(doc,"2.3 多维结构分析",2)
+        add_mpl_figure_to_docx(doc, make_mpl_dimension_bar_figure(df, dimensions[0], main_metric), f"图2 按{dimensions[0]}汇总{main_metric}")
         for dim in dimensions[:3]:
             g=dimension_summary(df,dim,main_metric); top=g.iloc[0]
             add_para(doc, f"在“{dim}”维度下，{top[dim]} 的 {main_metric} 表现最高，合计为 {money_fmt(top[f'{main_metric}合计'])}，记录数为 {int(top['记录数'])}。如该维度项长期占比过高，应判断是正常规模优势，还是存在资源集中、费用集中或结构失衡。")
+
     add_heading(doc,"三、AI 异常诊断",1)
     if anomaly_df is not None and len(anomaly_df):
         abnormal=anomaly_df[anomaly_df['是否经营异常']].copy(); high=abnormal[abnormal['风险等级']=='高风险']
         add_para(doc, f"系统基于主指标偏离、多指标组合偏离、动态业务规则和模型异常贡献识别异常经营单元。当前共识别出 {len(abnormal)} 个异常经营单元，其中高风险单元 {len(high)} 个。风险得分越高，说明该经营单元越需要优先核查。")
+        add_mpl_figure_to_docx(doc, make_mpl_risk_figure(anomaly_df), "图3 风险等级分布")
         top_anom=abnormal.sort_values('风险得分',ascending=False).head(5)
         if len(top_anom):
             add_heading(doc,"3.1 重点异常单元",2)
-            for _,row in top_anom.iterrows(): add_para(doc, f"风险得分 {row.get('风险得分','-')}: {row.get('异常依据','未生成异常依据')}", indent=False)
-            add_heading(doc,"3.2 异常原因归纳",2); add_para(doc,"高风险通常不是由单一数值造成，而是由主指标处于高位或低位、多项指标同时偏离、以及数据中实际存在的业务规则风险叠加形成。建议结合维度、相关指标和业务背景进行交叉核查。")
-    else: add_para(doc,"当前数据不足以进行稳定的异常诊断。")
+            # 用表格展示 Top 风险对象，提升可读性
+            risk_table = top_anom[[c for c in ["风险等级", "风险得分", "异常依据"] if c in top_anom.columns]].copy()
+            add_dataframe_to_docx(doc, risk_table, max_rows=5)
+            add_heading(doc,"3.2 异常原因归纳",2)
+            add_para(doc,"高风险通常不是由单一数值造成，而是由主指标处于高位或低位、多项指标同时偏离、以及数据中实际存在的业务规则风险叠加形成。建议结合维度、相关指标和业务背景进行交叉核查。")
+    else:
+        add_para(doc,"当前数据不足以进行稳定的异常诊断。")
+
     add_heading(doc,"四、管理建议",1)
-    if dimensions: add_para(doc, f"第一，建议优先围绕“{dimensions[0]}”等关键维度开展下钻分析，重点关注主指标贡献较高或波动较大的维度项，判断其变化是否来自业务规模扩大、资源投入增加，还是管理效率下降。")
+    if dimensions:
+        add_para(doc, f"第一，建议优先围绕“{dimensions[0]}”等关键维度开展下钻分析，重点关注主指标贡献较高或波动较大的维度项，判断其变化是否来自业务规模扩大、资源投入增加，还是管理效率下降。")
     add_para(doc, f"第二，针对“{main_metric}”处于高位的经营单元，建议复核对应业务单据、审批流程、资源投入和预算执行情况，识别是否存在集中支出、异常消耗、重复记录或口径不一致。")
     add_para(doc,"第三，针对多指标同时偏离的经营单元，建议开展交叉检查：一方面核查原始数据填报是否准确，另一方面结合相关数值指标判断是否存在投入产出不匹配、成本结构异常或业务流程异常。")
     add_para(doc,"第四，若系统识别出某些维度项长期占比过高，建议设置后续监控阈值，并定期输出同口径报表，以便判断该问题是短期波动还是持续性结构问题。")
-    if focus_list: add_para(doc, f"本次用户关注重点为：{'、'.join(focus_list)}。后续分析可围绕这些重点进一步细化，形成专项分析报告。")
-    add_heading(doc,"五、后续关注重点",1); add_para(doc,"后续建议持续关注主指标变化、维度结构变化、异常经营单元数量及高风险单元变化。如果接入预算、目标、行业基准或更完整的业务字段，系统可进一步提升异常解释和决策建议的精度。")
+
+    add_heading(doc,"五、后续关注重点",1)
+    add_para(doc,"后续建议持续关注主指标变化、维度结构变化、异常经营单元数量及高风险单元变化。如果接入预算、目标、行业基准或更完整的业务字段，系统可进一步提升异常解释和决策建议的精度。")
     bio=BytesIO(); doc.save(bio); bio.seek(0); return bio
 
 # ============================================================
@@ -2692,7 +2659,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 
 with tab1:
     st.subheader("🧩 数据治理")
-    st.markdown('<div class="tip-card">系统自动评估数据质量、识别字段角色并生成字段资产地图，帮助用户快速确认哪些字段适合作为主指标、分析维度和时间字段；详细字段表与处理日志默认折叠，便于需要时追溯分析依据。</div>', unsafe_allow_html=True)
+    st.markdown('<div class="tip-card">系统自动评估数据质量、识别字段角色并生成字段资产地图，帮助用户快速确认哪些字段适合作为主指标、分析维度和时间字段；详细字段表与处理日志默认折叠，便于按需追溯分析依据。</div>', unsafe_allow_html=True)
 
     health_score = compute_data_health_score(clean_summary, meta, numeric_report, metric_candidates, dimension_candidates, date_candidates)
 
@@ -2804,8 +2771,8 @@ with tab2:
         st.markdown("### 动态趋势演示")
         st.markdown("""
         <div class="highlight-note">
-        <b>生成条件：</b>当上传数据中存在有效日期字段、主指标可按时间汇总，且时间周期不少于 3 个时，系统会生成动态趋势图。
-        动态图按时间顺序展示主指标从起点到当前周期的演变过程；横轴仅保留关键时间刻度，便于观察整体变化方向。
+        <b>显示条件：</b>只有当上传数据中存在有效日期字段、主指标可按时间汇总，且时间周期不少于 3 个时，系统才会生成动态图。
+        动态图按时间顺序逐步展开主指标轨迹，用于观察经营指标从起点到当前周期的演变过程；横轴只保留关键区间刻度，避免时间标签过密。
         </div>
         """, unsafe_allow_html=True)
         animated_trend_chart(trend, main_metric, f"{main_metric}动态趋势演示")
@@ -3100,7 +3067,7 @@ with tab4:
 
 with tab5:
     st.subheader("💬 问数助手")
-    st.markdown("用户可输入任意与当前数据相关的问题，系统会调用所选大模型生成 SQL 并执行查询；同时展示 AI 直接回答、问题解析口径、查询结果和系统校验信息，提升问数结果的可追溯性。")
+    st.markdown("用户可输入任意与当前数据相关的问题，系统会调用所选大模型生成 SQL、执行查询，并返回结果解释。")
 
     with st.expander("查看问数任务综合评分规则"):
         st.markdown("""
@@ -3148,43 +3115,18 @@ with tab5:
                     except Exception as e:
                         pack = {"模型": provider, "SQL": "", "是否成功": False, "错误信息": str(e), "结果": pd.DataFrame(), "解释": "", "响应时间": np.nan, "综合评分": 0, "评分明细": {}}
 
+                if pack["SQL"]:
+                    st.code(pack["SQL"], language="sql")
                 if pack["是否成功"]:
                     st.success(f"执行成功｜响应时间：{pack['响应时间']:.2f}秒｜综合评分：{pack['综合评分']}")
-                    st.markdown(f"""
-                    <div class="qa-answer-card">
-                        <div class="qa-answer-title">AI直接回答</div>
-                        <div class="qa-answer-text">{pack.get('直接回答', '')}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                    st.markdown("#### 问题解析口径")
-                    render_parse_info(pack.get("口径解释", {}))
-
-                    st.markdown("#### SQL 查询语句")
-                    if pack["SQL"]:
-                        st.code(pack["SQL"], language="sql")
-
-                    st.markdown("#### 数据库执行结果")
                     st.dataframe(pack["结果"], use_container_width=True)
-
-                    st.markdown("#### 结果解释")
-                    render_ai_answer_pretty(pack.get("解释", ""))
-
-                    with st.expander("查看系统校验与评分明细", expanded=False):
-                        st.markdown("##### 系统校验信息")
-                        render_validation_info(pack.get("校验信息", {}))
-                        st.markdown("##### 评分明细")
-                        st.json(pack["评分明细"])
+                    st.markdown("#### 模型解释")
+                    st.info(pack["解释"])
                 else:
                     st.error(f"执行失败：{pack['错误信息']}")
-                    st.markdown("#### 问题解析口径")
-                    render_parse_info(pack.get("口径解释", {}))
-                    if pack["SQL"]:
-                        st.markdown("#### SQL 查询语句")
-                        st.code(pack["SQL"], language="sql")
-                    with st.expander("查看系统校验与评分明细", expanded=False):
-                        render_validation_info(pack.get("校验信息", {}))
-                        st.json(pack["评分明细"])
+
+                with st.expander("查看评分明细"):
+                    st.json(pack["评分明细"])
 
                 st.session_state["llm_records"].append({
                     "模型": provider,
@@ -3193,8 +3135,6 @@ with tab5:
                     "结果行数": len(pack["结果"]) if isinstance(pack["结果"], pd.DataFrame) else 0,
                     "响应时间秒": round(pack["响应时间"], 2) if not pd.isna(pack["响应时间"]) else None,
                     "问数任务综合评分": pack["综合评分"],
-                    "综合可信度": pack.get("校验信息", {}).get("综合可信度", ""),
-                    "口径字段": f"{pack.get('口径解释', {}).get('分组字段', '')} / {pack.get('口径解释', {}).get('指标字段', '')}",
                     "错误信息": pack["错误信息"]
                 })
 
@@ -3228,14 +3168,14 @@ with tab6:
     )
 
     st.markdown("### 决策简报预览")
-    st.info(f"系统将基于当前上传数据、主分析指标“{main_metric}”和所选关注重点生成 Word 决策简报。当前数据共 {len(df):,} 条记录。下方展示的是即将写入报告的核心分析口径和代表性图表，完整报告将在点击生成后下载。")
+    st.info(f"系统将基于当前上传数据、主分析指标“{main_metric}”和用户选择的关注重点生成 Word 决策简报。下方展示的是即将写入报告的核心分析口径和代表性图表，完整报告将在点击生成后下载。当前数据共 {len(df):,} 条记录。")
 
     if selected_dimensions:
         dim = selected_dimensions[0]
         full_g = dimension_summary(df, dim, main_metric)
         g = full_g.head(10)
-        preview_title = f"代表性图表预览：按{dim}汇总{main_metric}" if len(full_g) <= 10 else f"代表性图表预览：按{dim}的{main_metric}Top10"
-        bar_chart(g, dim, f"{main_metric}合计", preview_title)
+        chart_title = f"代表性图表预览：按{dim}汇总{main_metric}" if len(full_g) <= 10 else f"代表性图表预览：按{dim}汇总{main_metric} Top10"
+        bar_chart(g, dim, f"{main_metric}合计", chart_title)
 
     if st.button("生成并下载 Word 简报", type="primary"):
         try:
