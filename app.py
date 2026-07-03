@@ -1622,6 +1622,52 @@ def add_markdown_body_to_docx(doc, text, df, main_metric, dimensions, date_col, 
 
 
 
+
+def extract_clean_ai_blocks(ai_text):
+    """提取 AI 正文中的有效段落和表格，去掉报告大标题、一级编号标题和 Markdown 标记，避免 Word 中出现重复“一、二、三”。"""
+    text = str(ai_text or "")
+    table_blocks, tail = parse_markdown_tables(text)
+    lines = text.splitlines()
+    paras = []
+    for line in lines:
+        raw = line.strip()
+        if not raw or raw == "---":
+            continue
+        if "|" in raw:
+            continue
+        # 删除 Markdown 标题、报告题名和一级编号标题
+        if re.match(r"^#{1,6}\s*", raw):
+            raw = re.sub(r"^#{1,6}\s*", "", raw).strip()
+            if re.match(r"^[一二三四五六七八九十]+[、.．]", raw):
+                continue
+        if re.match(r"^(企业经营分析决策简报|经营分析决策简报|智策经营|基于\s*\d)", raw):
+            continue
+        if re.match(r"^[一二三四五六七八九十]+[、.．]\s*", raw):
+            # 不保留 AI 自带一级标题，避免与系统报告大纲冲突
+            continue
+        raw = re.sub(r"^[\-\*•]\s*", "", raw)
+        raw = clean_md_inline(raw)
+        raw = re.sub(r"^\d+[\.、]\s*", "", raw)
+        raw = raw.strip()
+        if raw and len(raw) >= 8:
+            paras.append(raw)
+    # 去重并限制长度
+    dedup = []
+    for p in paras:
+        if p not in dedup:
+            dedup.append(p)
+    return dedup[:12], table_blocks
+
+
+def add_default_action_table(doc, main_metric, dimensions):
+    rows = [
+        {"核查方向": "主指标异常单元", "具体内容": f"复核{main_metric}处于高位或低位的经营单元", "输出要求": "标注异常来源、责任维度和复核结论"},
+        {"核查方向": "原始明细数据", "具体内容": "核查订单、项目、客户、产品等原始明细记录", "输出要求": "确认是否存在重复、缺失、口径不一致或录入错误"},
+        {"核查方向": "关键维度下钻", "具体内容": f"围绕{dimensions[0] if dimensions else '主要维度'}进行分组对比", "输出要求": "识别贡献最高、波动最大或风险最集中的维度项"},
+        {"核查方向": "管理动作", "具体内容": "结合风险等级设置复核优先级和跟踪周期", "输出要求": "形成可执行的整改措施和后续监控指标"},
+    ]
+    add_dataframe_to_docx(doc, pd.DataFrame(rows), max_rows=8)
+
 def generate_ai_report_docx(ai_text, df, main_metric, dimensions, date_col, anomaly_df, focus_list):
     if not DOCX_AVAILABLE:
         raise RuntimeError("未安装 python-docx，请先安装：python -m pip install python-docx")
@@ -1632,45 +1678,82 @@ def generate_ai_report_docx(ai_text, df, main_metric, dimensions, date_col, anom
     subtitle = doc.add_paragraph(); subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r = subtitle.add_run("AI 驱动的多维经营分析与决策支持系统自动生成"); set_run_font(r, "宋体", 11, False); r.font.color.rgb = RGBColor(90,90,90)
 
-    add_heading(doc, "一、分析概况", 1)
-    add_para(doc, f"本报告基于当前上传数据自动生成，主分析指标为“{main_metric}”，清洗后数据共 {len(df):,} 条记录。系统先基于规则和统计方法生成核心图表，再结合大模型输出经营解读和管理建议。", indent=False)
-    if focus_list:
-        add_para(doc, f"本次关注重点包括：{'、'.join(focus_list)}。", indent=False)
+    ai_paras, ai_tables = extract_clean_ai_blocks(ai_text)
 
-    add_heading(doc, "二、核心经营表现与可视化", 1)
-    add_para(doc, f"“{main_metric}”合计为 {money_fmt(df[main_metric].sum())}，均值为 {money_fmt(df[main_metric].mean())}，最大值为 {money_fmt(df[main_metric].max())}，最小值为 {money_fmt(df[main_metric].min())}。", indent=True)
+    add_heading(doc, "一、分析概况", 1)
+    add_heading(doc, "1.1 数据范围与分析口径", 2)
+    add_para(doc, f"本报告基于当前上传数据自动生成，清洗后数据共 {len(df):,} 条记录，主分析指标为“{main_metric}”。系统根据上传数据中实际存在的字段开展分析，不引用未上传或不存在的指标。", indent=True)
+    if focus_list:
+        add_para(doc, f"本次简报关注重点包括：{'、'.join(focus_list)}。", indent=True)
+
+    add_heading(doc, "1.2 核心指标摘要", 2)
+    table = doc.add_table(rows=1, cols=2); table.alignment = WD_TABLE_ALIGNMENT.CENTER; table.style = "Table Grid"
+    table.rows[0].cells[0].text = "指标"; table.rows[0].cells[1].text = "数值"
+    abnormal_n = int((anomaly_df['是否经营异常']).sum()) if anomaly_df is not None and len(anomaly_df) and '是否经营异常' in anomaly_df.columns else 0
+    for k, v in [(f"{main_metric}合计", money_fmt(df[main_metric].sum())), (f"{main_metric}均值", money_fmt(df[main_metric].mean())), (f"{main_metric}最大值", money_fmt(df[main_metric].max())), (f"{main_metric}最小值", money_fmt(df[main_metric].min())), ("数据记录数", f"{len(df):,}"), ("异常经营单元数", str(abnormal_n))]:
+        cells = table.add_row().cells; cells[0].text = k; cells[1].text = v
+
+    add_heading(doc, "二、核心经营表现", 1)
+    add_heading(doc, "2.1 总体表现", 2)
+    add_para(doc, f"当前样本中，“{main_metric}”合计为 {money_fmt(df[main_metric].sum())}，均值为 {money_fmt(df[main_metric].mean())}，最大值为 {money_fmt(df[main_metric].max())}，最小值为 {money_fmt(df[main_metric].min())}。", indent=True)
     if date_col:
         trend = build_trend(df, date_col, main_metric)
+        add_heading(doc, "2.2 时间趋势分析", 2)
         add_para(doc, trend_interpretation(trend, main_metric), indent=True)
         if len(trend) >= 2:
             add_mpl_figure_to_docx(doc, make_mpl_trend_figure(trend, main_metric), f"图1 {main_metric}时间趋势")
     else:
-        add_para(doc, "当前未选择有效日期字段，系统采用结构分布图观察主指标集中程度和离散情况。", indent=True)
+        add_heading(doc, "2.2 结构分布分析", 2)
+        add_para(doc, f"当前未选择有效日期字段，系统采用结构分布方式观察“{main_metric}”的集中程度和离散情况。", indent=True)
         add_mpl_figure_to_docx(doc, make_mpl_distribution_figure(df, main_metric), f"图1 {main_metric}分布情况")
 
+    add_heading(doc, "三、多维结构分析", 1)
     if dimensions:
-        add_heading(doc, "三、多维结构分析", 1)
+        add_heading(doc, "3.1 主要维度表现", 2)
         add_mpl_figure_to_docx(doc, make_mpl_dimension_bar_figure(df, dimensions[0], main_metric), f"图2 按{dimensions[0]}汇总{main_metric}")
         g = dimension_summary(df, dimensions[0], main_metric)
         if len(g):
             top = g.iloc[0]
-            add_para(doc, f"从“{dimensions[0]}”维度看，{top[dimensions[0]]} 的 {main_metric} 合计最高，为 {money_fmt(top[f'{main_metric}合计'])}。该维度项可作为后续重点下钻对象。")
+            add_para(doc, f"从“{dimensions[0]}”维度看，{top[dimensions[0]]} 的 {main_metric} 合计最高，为 {money_fmt(top[f'{main_metric}合计'])}。该维度项可作为后续重点下钻对象。", indent=True)
+    else:
+        add_para(doc, "当前数据中可用于分组下钻的维度字段较少，建议补充地区、部门、客户类型、产品类别等维度字段，以提升结构分析效果。", indent=True)
 
     add_heading(doc, "四、风险识别与异常诊断", 1)
     if anomaly_df is not None and len(anomaly_df):
         abnormal = anomaly_df[anomaly_df["是否经营异常"]].copy() if "是否经营异常" in anomaly_df.columns else pd.DataFrame()
         high_n = int((abnormal.get("风险等级", pd.Series(dtype=str)) == "高风险").sum()) if len(abnormal) else 0
-        add_para(doc, f"系统当前识别出 {len(abnormal)} 个异常经营单元，其中高风险单元 {high_n} 个。风险识别结果用于提示优先核查对象。")
+        add_para(doc, f"系统当前识别出 {len(abnormal)} 个异常经营单元，其中高风险单元 {high_n} 个。风险识别结果用于提示优先核查对象。", indent=True)
         add_mpl_figure_to_docx(doc, make_mpl_risk_figure(anomaly_df), "图3 风险等级分布")
         if len(abnormal):
+            add_heading(doc, "4.1 重点异常单元", 2)
             top_anom = abnormal.sort_values("风险得分", ascending=False).head(5)
             cols = [c for c in ["风险等级", "风险得分", "异常依据"] if c in top_anom.columns]
             add_dataframe_to_docx(doc, top_anom[cols], max_rows=5)
     else:
-        add_para(doc, "当前数据暂未形成稳定的异常诊断结果。")
+        add_para(doc, "当前数据暂未形成稳定的异常诊断结果。", indent=True)
 
     add_heading(doc, "五、AI增强解读与管理建议", 1)
-    add_markdown_body_to_docx(doc, ai_text, df, main_metric, dimensions, date_col, anomaly_df)
+    add_heading(doc, "5.1 AI综合判断", 2)
+    if ai_paras:
+        for p in ai_paras[:4]:
+            add_para(doc, p, indent=True)
+    else:
+        add_para(doc, "系统已完成经营指标、维度结构和风险结果的综合分析。后续应结合业务背景，对高贡献维度和高风险经营单元进行重点复核。", indent=True)
+
+    add_heading(doc, "5.2 重点问题归纳", 2)
+    if anomaly_df is not None and len(anomaly_df) and '是否经营异常' in anomaly_df.columns:
+        abnormal = anomaly_df[anomaly_df['是否经营异常']]
+        add_para(doc, f"重点问题主要集中在异常经营单元识别和高风险对象复核方面。当前异常单元数量为 {len(abnormal)}，建议优先核查风险得分较高、异常依据较多的对象。", indent=True)
+    else:
+        add_para(doc, "当前未识别出明显高风险对象，但仍建议定期跟踪主指标趋势和维度结构变化。", indent=True)
+
+    add_heading(doc, "5.3 后续核查与管理建议", 2)
+    if ai_tables:
+        for _, tb in ai_tables[:2]:
+            add_dataframe_to_docx(doc, tb, max_rows=12)
+    else:
+        add_default_action_table(doc, main_metric, dimensions)
+    add_para(doc, "以上建议用于辅助管理层确定核查优先级。实际决策仍需结合企业业务背景、政策制度、预算目标和原始业务单据进行综合判断。", indent=True)
 
     bio = BytesIO()
     doc.save(bio)
@@ -2103,22 +2186,44 @@ def _short_label(x, max_len=14):
 
 
 def _mpl_money_axis(x, pos=None):
+    """Matplotlib 图内尽量使用 ASCII 数值后缀，避免云端环境缺少中文字体时出现方框。"""
     try:
         x = float(x)
     except Exception:
         return str(x)
-    if abs(x) >= 100000000:
-        return f"{x/100000000:.1f}亿"
-    if abs(x) >= 10000:
-        return f"{x/10000:.0f}万"
+    sign = "-" if x < 0 else ""
+    ax = abs(x)
+    if ax >= 1_000_000_000:
+        return f"{sign}{ax/1_000_000_000:.1f}B"
+    if ax >= 1_000_000:
+        return f"{sign}{ax/1_000_000:.1f}M"
+    if ax >= 1_000:
+        return f"{sign}{ax/1_000:.0f}K"
     return f"{x:.0f}"
 
 
+def _mpl_value_label(x):
+    """Matplotlib 图内数据标签，避免使用“万/亿”等中文单位。"""
+    try:
+        x = float(x)
+    except Exception:
+        return str(x)
+    sign = "-" if x < 0 else ""
+    ax = abs(x)
+    if ax >= 1_000_000_000:
+        return f"{sign}{ax/1_000_000_000:.2f}B"
+    if ax >= 1_000_000:
+        return f"{sign}{ax/1_000_000:.2f}M"
+    if ax >= 1_000:
+        return f"{sign}{ax/1_000:.1f}K"
+    return f"{x:.2f}"
+
 def add_mpl_figure_to_docx(doc, fig, caption):
-    """把 Matplotlib 图表以 PNG 插入 Word。"""
+    """把 Matplotlib 图表以 PNG 插入 Word；若图中使用 C1/R1 等编码，自动补充中文映射表。"""
     try:
         img = BytesIO()
         fig.savefig(img, format="png", dpi=180, bbox_inches="tight", facecolor="white")
+        mapping = getattr(fig, "_zc_mapping", None)
         plt.close(fig)
         img.seek(0)
         p = doc.add_paragraph()
@@ -2126,6 +2231,13 @@ def add_mpl_figure_to_docx(doc, fig, caption):
         run = p.add_run(caption)
         set_run_font(run, "黑体", 10, True)
         doc.add_picture(img, width=Inches(6.2))
+        if mapping:
+            map_df = pd.DataFrame(mapping)
+            if len(map_df):
+                p2 = doc.add_paragraph()
+                run2 = p2.add_run("图中编码说明：")
+                set_run_font(run2, "黑体", 10, True)
+                add_dataframe_to_docx(doc, map_df, max_rows=20)
         return True
     except Exception as e:
         try:
@@ -2134,7 +2246,6 @@ def add_mpl_figure_to_docx(doc, fig, caption):
             pass
         add_para(doc, f"图表“{caption}”生成失败：{e}。", indent=False)
         return False
-
 
 def make_mpl_trend_figure(trend, metric):
     _setup_mpl_style()
@@ -2150,8 +2261,8 @@ def make_mpl_trend_figure(trend, metric):
         max_i = int(np.nanargmax(ys)); min_i = int(np.nanargmin(ys))
         ax.scatter([max_i], [ys[max_i]], s=78, zorder=4)
         ax.scatter([min_i], [ys[min_i]], s=78, zorder=4)
-        ax.annotate(f"最高 {money_fmt(ys[max_i])}", (max_i, ys[max_i]), xytext=(0, 12), textcoords="offset points", ha="center", fontsize=9)
-        ax.annotate(f"最低 {money_fmt(ys[min_i])}", (min_i, ys[min_i]), xytext=(0, -18), textcoords="offset points", ha="center", fontsize=9)
+        ax.annotate(f"Max {_mpl_value_label(ys[max_i])}", (max_i, ys[max_i]), xytext=(0, 12), textcoords="offset points", ha="center", fontsize=9)
+        ax.annotate(f"Min {_mpl_value_label(ys[min_i])}", (min_i, ys[min_i]), xytext=(0, -18), textcoords="offset points", ha="center", fontsize=9)
     periods = plot["期间"].astype(str).tolist()
     if len(periods) > 8:
         step = max(1, int(np.ceil(len(periods) / 8)))
@@ -2163,36 +2274,36 @@ def make_mpl_trend_figure(trend, metric):
     ax.set_xticks(tick_idx)
     ax.set_xticklabels([periods[i] for i in tick_idx], rotation=0, fontsize=9)
     ax.yaxis.set_major_formatter(FuncFormatter(_mpl_money_axis))
-    ax.set_title(f"{metric}时间趋势", fontsize=14, fontweight="bold", loc="left")
-    ax.set_xlabel("期间")
-    ax.set_ylabel(metric)
+    ax.set_title("Trend of Key Metric", fontsize=14, fontweight="bold", loc="left")
+    ax.set_xlabel("Period")
+    ax.set_ylabel("Value")
     ax.grid(axis="y", alpha=0.25)
     ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
     fig.tight_layout()
     return fig
 
-
 def make_mpl_dimension_bar_figure(df, dim, metric, topn=10):
     _setup_mpl_style()
     g = dimension_summary(df, dim, metric).head(topn).copy()
     g[f"{metric}合计"] = pd.to_numeric(g[f"{metric}合计"], errors="coerce").fillna(0)
-    # 横向条形图从小到大绘制，显示时最大值在上方
     g = g.sort_values(f"{metric}合计", ascending=True)
     fig, ax = plt.subplots(figsize=(8.8, max(4.2, 0.42 * len(g) + 1.2)))
-    labels = [_short_label(v, 16) for v in g[dim].astype(str).tolist()]
+    raw_labels = g[dim].astype(str).tolist()
+    code_labels = [f"C{i+1}" for i in range(len(raw_labels))]
     vals = g[f"{metric}合计"].astype(float).tolist()
-    bars = ax.barh(labels, vals, height=0.62)
+    bars = ax.barh(code_labels, vals, height=0.62)
     ax.xaxis.set_major_formatter(FuncFormatter(_mpl_money_axis))
-    ax.set_title(f"按{dim}汇总{metric}", fontsize=14, fontweight="bold", loc="left")
-    ax.set_xlabel(f"{metric}合计")
+    ax.set_title("Dimension Summary", fontsize=14, fontweight="bold", loc="left")
+    ax.set_xlabel("Total Value")
+    ax.set_ylabel("Category Code")
     ax.grid(axis="x", alpha=0.22)
     ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
     max_val = max([abs(v) for v in vals] + [1])
     for bar, val in zip(bars, vals):
-        ax.text(val + max_val * 0.015, bar.get_y() + bar.get_height()/2, money_fmt(val), va="center", fontsize=9)
+        ax.text(val + max_val * 0.015, bar.get_y() + bar.get_height()/2, _mpl_value_label(val), va="center", fontsize=9)
+    fig._zc_mapping = [{"图中编码": code, "对应维度项": raw} for code, raw in zip(code_labels, raw_labels)]
     fig.tight_layout()
     return fig
-
 
 def make_mpl_distribution_figure(df, metric):
     _setup_mpl_style()
@@ -2200,35 +2311,40 @@ def make_mpl_distribution_figure(df, metric):
     fig, ax = plt.subplots(figsize=(8.8, 4.4))
     if len(s) > 0:
         ax.hist(s.astype(float).tolist(), bins=min(30, max(8, int(np.sqrt(len(s))))), alpha=0.86)
-        ax.axvline(float(s.mean()), linestyle="--", linewidth=2, label="均值")
+        ax.axvline(float(s.mean()), linestyle="--", linewidth=2, label="Mean")
         ax.legend(fontsize=9)
     ax.xaxis.set_major_formatter(FuncFormatter(_mpl_money_axis))
-    ax.set_title(f"{metric}分布情况", fontsize=14, fontweight="bold", loc="left")
-    ax.set_xlabel(metric); ax.set_ylabel("记录数")
+    ax.set_title("Metric Distribution", fontsize=14, fontweight="bold", loc="left")
+    ax.set_xlabel("Value")
+    ax.set_ylabel("Count")
     ax.grid(axis="y", alpha=0.22)
     ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
     fig.tight_layout()
     return fig
 
-
 def make_mpl_risk_figure(anomaly_df):
     _setup_mpl_style()
     fig, ax = plt.subplots(figsize=(8.0, 4.2))
+    mapping = []
     if anomaly_df is not None and len(anomaly_df) and "风险等级" in anomaly_df.columns:
         order = ["高风险", "中风险", "低风险", "正常"]
         counts = anomaly_df["风险等级"].value_counts()
         labels = [x for x in order if x in counts.index] + [x for x in counts.index if x not in order]
         vals = [int(counts.get(x, 0)) for x in labels]
-        bars = ax.bar(labels, vals, width=0.55)
+        code_labels = [f"R{i+1}" for i in range(len(labels))]
+        bars = ax.bar(code_labels, vals, width=0.55)
+        mapping = [{"图中编码": code, "风险等级": label} for code, label in zip(code_labels, labels)]
         for bar, val in zip(bars, vals):
             ax.text(bar.get_x() + bar.get_width()/2, val + max(vals + [1])*0.02, str(val), ha="center", fontsize=10)
-    ax.set_title("风险等级分布", fontsize=14, fontweight="bold", loc="left")
-    ax.set_xlabel("风险等级"); ax.set_ylabel("经营单元数")
+    ax.set_title("Risk Level Distribution", fontsize=14, fontweight="bold", loc="left")
+    ax.set_xlabel("Risk Code")
+    ax.set_ylabel("Count")
     ax.grid(axis="y", alpha=0.22)
     ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+    if mapping:
+        fig._zc_mapping = mapping
     fig.tight_layout()
     return fig
-
 
 def add_core_visuals_to_docx(doc, df, main_metric, dimensions, date_col, anomaly_df):
     """在 Word 简报中插入核心可视化：趋势/分布、维度结构、风险分布。"""
