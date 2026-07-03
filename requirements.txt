@@ -1,0 +1,10 @@
+streamlit
+pandas
+openpyxl
+plotly>=5.18.0
+scikit-learn
+numpy
+requests
+python-docx
+tabulate
+statsmodels
