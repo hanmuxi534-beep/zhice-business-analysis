@@ -2204,21 +2204,23 @@ def _pick_mpl_chinese_font():
     except Exception:
         pass
     return ""
+_ZC_HAS_CHINESE_FONT = False
+
 def _setup_mpl_style():
     font_name = _pick_mpl_chinese_font()
     if font_name:
         plt.rcParams["font.sans-serif"] = [font_name, "Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"]
-        plt.rcParams["zc_has_chinese_font"] = True
+        _ZC_HAS_CHINESE_FONT = True
     else:
         plt.rcParams["font.sans-serif"] = ["DejaVu Sans"]
-        plt.rcParams["zc_has_chinese_font"] = False
+        _ZC_HAS_CHINESE_FONT = False
     plt.rcParams["axes.unicode_minus"] = False
     plt.rcParams["figure.facecolor"] = "white"
     plt.rcParams["axes.facecolor"] = "white"
 
 
 def _mpl_has_chinese_font():
-    return bool(plt.rcParams.get("zc_has_chinese_font", False))
+    return bool(_ZC_HAS_CHINESE_FONT)
 def _short_label(x, max_len=14):
     s = str(x)
     return s if len(s) <= max_len else s[:max_len] + "…"
