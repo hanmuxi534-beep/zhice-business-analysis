@@ -474,6 +474,72 @@ div[data-testid="stMarkdownContainer"] li {
     color: #16834A;
 }
 
+
+.gov-layout {
+    display: grid;
+    grid-template-columns: 0.86fr 1.45fr;
+    gap: 18px;
+    margin-bottom: 18px;
+}
+.asset-grid-compact {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
+    gap: 14px;
+}
+.asset-card.compact {
+    min-height: 118px;
+    padding: 18px 20px;
+}
+.compact-progress-wrap {
+    background: #FFFFFF;
+    border: 1px solid #E5EBF3;
+    border-radius: 22px;
+    padding: 18px 22px;
+    box-shadow: 0 10px 24px rgba(30,55,90,.06);
+    margin-bottom: 18px;
+}
+.compact-progress-row {
+    display: grid;
+    grid-template-columns: 150px 1fr 70px;
+    align-items: center;
+    gap: 14px;
+    padding: 8px 0;
+    border-bottom: 1px solid #EEF3F8;
+}
+.compact-progress-row:last-child { border-bottom: none; }
+.compact-progress-name {
+    color: #243654;
+    font-weight: 900;
+    font-size: 15px;
+}
+.compact-progress-track {
+    height: 12px;
+    background: #E9EEF6;
+    border-radius: 999px;
+    overflow: hidden;
+}
+.compact-progress-fill {
+    height: 12px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #1E77D3, #71B7FF);
+}
+.compact-progress-value {
+    color: #66758C;
+    font-size: 14px;
+    font-weight: 900;
+    text-align: right;
+}
+.gov-section-title {
+    font-size: 22px;
+    font-weight: 950;
+    color: #10213F;
+    margin: 18px 0 10px 0;
+}
+@media (max-width: 1100px) {
+    .gov-layout { grid-template-columns: 1fr; }
+    .asset-grid-compact { grid-template-columns: 1fr; }
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -3337,10 +3403,44 @@ def gauge_chart(score):
 
 
 
+
+def governance_health_gauge(health_score):
+    level, desc = health_level(health_score)
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=float(health_score),
+        number={"suffix": " 分", "font": {"size": 34, "color": "#071F43"}},
+        title={"text": f"数据健康度<br><span style='font-size:14px;color:#66758C'>{level}｜{desc}</span>"},
+        gauge={
+            "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "#DDE6F1"},
+            "bar": {"color": "#1E77D3"},
+            "bgcolor": "white",
+            "borderwidth": 1,
+            "bordercolor": "#E5EBF3",
+            "steps": [
+                {"range": [0, 60], "color": "#FFE8E8"},
+                {"range": [60, 80], "color": "#FFF4D8"},
+                {"range": [80, 100], "color": "#EAF8F0"}
+            ],
+            "threshold": {
+                "line": {"color": "#123A63", "width": 4},
+                "thickness": 0.75,
+                "value": float(health_score)
+            }
+        }
+    ))
+    fig.update_layout(
+        height=310,
+        margin=dict(l=20, r=20, t=48, b=16),
+        paper_bgcolor="#FFFFFF",
+        font=dict(family="Microsoft YaHei, PingFang SC, Arial", size=15)
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
 def governance_asset_overview_cards(health_score, clean_summary, meta, metric_candidates, dimension_candidates, date_candidates, numeric_report, quality_report):
     rows = int(clean_summary.get("清洗后行数", 0))
     cols = int(clean_summary.get("清洗后字段数", 0))
-
     valid_metric = len(metric_candidates)
     valid_dim = len(dimension_candidates)
     valid_date = len(date_candidates)
@@ -3349,38 +3449,15 @@ def governance_asset_overview_cards(health_score, clean_summary, meta, metric_ca
     if numeric_report is not None and len(numeric_report) and "缺失/无法解析数" in numeric_report.columns:
         issue_total += int(pd.to_numeric(numeric_report["缺失/无法解析数"], errors="coerce").fillna(0).sum())
 
-    level, desc = health_level(health_score)
-    html = f"""
-    <div class="asset-grid">
-        <div class="asset-card">
-            <div class="asset-label">数据健康度</div>
-            <div class="asset-value">{health_score}<span style="font-size:18px;"> 分</span></div>
-            <div class="asset-note">{level}｜{desc}</div>
-        </div>
-        <div class="asset-card">
-            <div class="asset-label">可分析记录</div>
-            <div class="asset-value">{rows:,}</div>
-            <div class="asset-note">清洗后进入分析的数据行数</div>
-        </div>
-        <div class="asset-card">
-            <div class="asset-label">字段资产</div>
-            <div class="asset-value">{cols}</div>
-            <div class="asset-note">已识别字段总数</div>
-        </div>
-        <div class="asset-card">
-            <div class="asset-label">分析路径</div>
-            <div class="asset-value">{valid_metric}/{valid_dim}/{valid_date}</div>
-            <div class="asset-note">主指标 / 维度 / 日期字段</div>
-        </div>
-        <div class="asset-card">
-            <div class="asset-label">质量关注点</div>
-            <div class="asset-value">{issue_total:,}</div>
-            <div class="asset-note">缺失、重复或解析问题记录</div>
-        </div>
-    </div>
-    """
+    html = (
+        '<div class="asset-grid-compact">'
+        f'<div class="asset-card compact"><div class="asset-label">可分析记录</div><div class="asset-value">{rows:,}</div><div class="asset-note">清洗后进入分析的数据行数</div></div>'
+        f'<div class="asset-card compact"><div class="asset-label">字段资产</div><div class="asset-value">{cols}</div><div class="asset-note">系统已识别的字段总数</div></div>'
+        f'<div class="asset-card compact"><div class="asset-label">分析路径</div><div class="asset-value">{valid_metric}/{valid_dim}/{valid_date}</div><div class="asset-note">主指标 / 维度 / 日期字段</div></div>'
+        f'<div class="asset-card compact"><div class="asset-label">质量关注点</div><div class="asset-value">{issue_total:,}</div><div class="asset-note">缺失、重复或解析问题线索</div></div>'
+        '</div>'
+    )
     st.markdown(html, unsafe_allow_html=True)
-
 
 def governance_flow_summary(health_score, main_metric, metric_candidates, dimension_candidates, date_candidates, clean_summary):
     level, desc = health_level(health_score)
@@ -3440,21 +3517,17 @@ def governance_action_center(clean_summary, numeric_report, quality_report, metr
     else:
         actions.append(("分析路径完整性", "主指标与维度字段较完整，可支持经营态势、多维洞察和风险识别。", "正常"))
 
-    html = '<div class="action-list-card"><h3 style="margin-top:0;">质量体检与处理建议</h3>'
+    html_parts = ['<div class="action-list-card"><h3 style="margin-top:0;">质量体检与处理建议</h3>']
     for title, desc, status in actions:
         cls = "warn" if status == "需关注" else ("ok" if status == "正常" else "")
-        html += f"""
-        <div class="action-item">
-            <div>
-                <div class="action-title">{title}</div>
-                <div class="action-desc">{desc}</div>
-            </div>
-            <div class="action-badge {cls}">{status}</div>
-        </div>
-        """
-    html += "</div>"
-    st.markdown(html, unsafe_allow_html=True)
-
+        html_parts.append(
+            f'<div class="action-item">'
+            f'<div><div class="action-title">{title}</div><div class="action-desc">{desc}</div></div>'
+            f'<div class="action-badge {cls}">{status}</div>'
+            f'</div>'
+        )
+    html_parts.append("</div>")
+    st.markdown("".join(html_parts), unsafe_allow_html=True)
 
 def field_asset_table(meta, metric_candidates, dimension_candidates, date_candidates):
     show_cols = ["字段名", "字段含义解释", "字段类型", "推荐角色", "推荐聚合方式", "是否适合作为主指标", "注意事项"]
@@ -3586,23 +3659,20 @@ def numeric_validity_progress(numeric_report):
         after = float(r.get("转换后有效数值数", 0))
         rate = after / before if before > 0 else 1
         rows.append({"字段": field, "有效率": max(0, min(rate, 1)), "有效率文本": f"{max(0, min(rate, 1)):.1%}"})
-    df_rate = pd.DataFrame(rows).sort_values("有效率", ascending=True).tail(12)
 
-    fig = go.Figure(go.Bar(
-        x=df_rate["有效率"],
-        y=df_rate["字段"],
-        orientation="h",
-        text=df_rate["有效率文本"],
-        textposition="outside",
-        hovertemplate="%{y}<br>有效率=%{text}<extra></extra>"
-    ))
-    fig.update_xaxes(range=[0, 1.05], tickformat=".0%")
-    fig.update_layout(
-        title="数值字段可解析性",
-        xaxis_title="有效数值占比",
-        yaxis_title="数值字段"
-    )
-    st.plotly_chart(chart_layout(fig, 500), use_container_width=True)
+    df_rate = pd.DataFrame(rows).sort_values("有效率", ascending=True).tail(8)
+    html_parts = ['<div class="compact-progress-wrap">']
+    for _, r in df_rate.iterrows():
+        pct = float(r["有效率"]) * 100
+        html_parts.append(
+            f'<div class="compact-progress-row">'
+            f'<div class="compact-progress-name">{r["字段"]}</div>'
+            f'<div class="compact-progress-track"><div class="compact-progress-fill" style="width:{pct:.1f}%"></div></div>'
+            f'<div class="compact-progress-value">{r["有效率文本"]}</div>'
+            f'</div>'
+        )
+    html_parts.append("</div>")
+    st.markdown("".join(html_parts), unsafe_allow_html=True)
 
 def chart_data_diagnostic(df, main_metric, numeric_cols, dimensions):
     rows = []
@@ -3652,25 +3722,30 @@ with tab1:
 
     health_score = compute_data_health_score(clean_summary, meta, numeric_report, metric_candidates, dimension_candidates, date_candidates)
 
-    # 1. 数据资产总览：先给管理者一个整体判断
+    # 顶部：结论摘要 + 健康度仪表盘 + 字段资产卡片
     data_understanding_summary(health_score, main_metric, metric_candidates, dimension_candidates, date_candidates, clean_summary)
-    governance_asset_overview_cards(health_score, clean_summary, meta, metric_candidates, dimension_candidates, date_candidates, numeric_report, quality_report)
+    left, right = st.columns([0.88, 1.45])
+    with left:
+        governance_health_gauge(health_score)
+    with right:
+        governance_asset_overview_cards(health_score, clean_summary, meta, metric_candidates, dimension_candidates, date_candidates, numeric_report, quality_report)
 
     st.markdown("### 字段资产地图")
-    c1, c2 = st.columns([1.0, 1.35])
+    c1, c2 = st.columns([0.95, 1.35])
     with c1:
         role_distribution_chart(meta)
     with c2:
         field_recommendation_cards(meta, metric_candidates, dimension_candidates, date_candidates)
 
     st.markdown("### 数据质量体检")
-    c1, c2 = st.columns([1.15, 1.1])
+    c1, c2 = st.columns([1.05, 1.15])
     with c1:
         data_quality_issue_chart(clean_summary, quality_report, numeric_report)
     with c2:
         governance_action_center(clean_summary, numeric_report, quality_report, metric_candidates, dimension_candidates, date_candidates)
 
     st.markdown("### 数值字段可解析性")
+    st.markdown('<div class="detail-expander-note">用于判断金额、数量、利润、折扣等字段是否能被系统稳定识别为数值。这里只保留关键字段的有效率概览，完整转换明细可在下方展开查看。</div>', unsafe_allow_html=True)
     numeric_validity_progress(numeric_report)
 
     st.markdown("### 当前分析口径")
