@@ -3408,40 +3408,41 @@ def gauge_chart(score):
 def management_status_summary(df, main_metric, anomaly_df, trend=None, selected_dimensions=None):
     """经营态势页摘要卡：让用户先看到当前经营状态，而不是只看数字。"""
     metric_series = pd.to_numeric(df[main_metric], errors="coerce").dropna()
+
     if trend is not None and len(trend) >= 2 and main_metric in trend.columns:
         first = pd.to_numeric(trend[main_metric], errors="coerce").iloc[0]
         last = pd.to_numeric(trend[main_metric], errors="coerce").iloc[-1]
         change = (last - first) / abs(first) if first != 0 else np.nan
         if pd.isna(change):
-            status = "待观察"
-            status_desc = "趋势变化暂无法稳定计算"
+            status = "趋势待确认"
+            status_desc = "当前时间序列不足以形成稳定趋势判断。"
         elif change > 0.1:
-            status = "增长"
-            status_desc = f"末期较初期增长约 {change:.1%}"
+            status = "增长态势"
+            status_desc = f"末期较初期增长约 {change:.1%}，建议进一步查看增长来源。"
         elif change < -0.1:
-            status = "回落"
-            status_desc = f"末期较初期下降约 {abs(change):.1%}"
+            status = "回落态势"
+            status_desc = f"末期较初期下降约 {abs(change):.1%}，建议关注拖累维度。"
         else:
-            status = "平稳"
-            status_desc = "期初与期末差异不大"
+            status = "相对平稳"
+            status_desc = "期初与期末差异不大，可重点观察结构和异常变化。"
     else:
-        status = "结构观察"
-        status_desc = "当前未形成时间趋势，重点观察结构分布"
+        status = "结构分析为主"
+        status_desc = "当前未形成有效时间趋势，系统将优先从维度贡献、结构集中和异常对象进行分析。"
 
     if len(metric_series) > 0:
         max_mean = metric_series.max() / metric_series.mean() if metric_series.mean() != 0 else np.nan
         if not pd.isna(max_mean) and max_mean >= 6:
             structure = "长尾集中"
-            struct_desc = "少数高值单元对整体影响较大"
+            struct_desc = "少数高值单元对整体结果影响较大。"
         elif not pd.isna(max_mean) and max_mean >= 3:
             structure = "适度集中"
-            struct_desc = "存在一定高值集中现象"
+            struct_desc = "存在一定高值集中现象。"
         else:
             structure = "相对均衡"
-            struct_desc = "极端高值影响相对有限"
+            struct_desc = "极端高值对整体影响相对有限。"
     else:
         structure = "待观察"
-        struct_desc = "主指标有效值不足"
+        struct_desc = "主指标有效值不足，暂不形成结构判断。"
 
     if anomaly_df is not None and len(anomaly_df) and "是否经营异常" in anomaly_df.columns:
         abnormal_rate = anomaly_df["是否经营异常"].sum() / max(len(anomaly_df), 1)
@@ -3451,54 +3452,134 @@ def management_status_summary(df, main_metric, anomaly_df, trend=None, selected_
             risk = "局部关注"
         else:
             risk = "正常"
-        risk_desc = f"异常占比约 {abnormal_rate:.1%}"
+        risk_desc = f"异常占比约 {abnormal_rate:.1%}。"
     else:
         risk = "待识别"
-        risk_desc = "暂未形成异常结果"
+        risk_desc = "暂未形成异常识别结果。"
 
     st.markdown(f"""
     <div class="section-card">
         <h3 style="margin-top:0;">管理层态势摘要</h3>
         <div class="asset-grid-compact">
-            <div class="asset-card compact"><div class="asset-label">当前表现</div><div class="asset-value" style="font-size:26px;">{status}</div><div class="asset-note">{status_desc}</div></div>
-            <div class="asset-card compact"><div class="asset-label">结构特征</div><div class="asset-value" style="font-size:26px;">{structure}</div><div class="asset-note">{struct_desc}</div></div>
-            <div class="asset-card compact"><div class="asset-label">风险状态</div><div class="asset-value" style="font-size:26px;">{risk}</div><div class="asset-note">{risk_desc}</div></div>
-            <div class="asset-card compact"><div class="asset-label">管理提示</div><div class="asset-value" style="font-size:22px;">先看总览</div><div class="asset-note">再进入风险识别页下钻异常对象</div></div>
+            <div class="asset-card compact">
+                <div class="asset-label">当前表现</div>
+                <div class="asset-value" style="font-size:26px;">{status}</div>
+                <div class="asset-note">{status_desc}</div>
+            </div>
+            <div class="asset-card compact">
+                <div class="asset-label">结构特征</div>
+                <div class="asset-value" style="font-size:26px;">{structure}</div>
+                <div class="asset-note">{struct_desc}</div>
+            </div>
+            <div class="asset-card compact">
+                <div class="asset-label">风险状态</div>
+                <div class="asset-value" style="font-size:26px;">{risk}</div>
+                <div class="asset-note">{risk_desc}</div>
+            </div>
+            <div class="asset-card compact">
+                <div class="asset-label">管理提示</div>
+                <div class="asset-value" style="font-size:22px;">先看结构，再查异常</div>
+                <div class="asset-note">先定位贡献集中的维度，再进入风险识别页复核高风险对象。</div>
+            </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-
-def dimension_treemap_chart(df, dim, metric, topn=20):
-    """结构地图：使用 go.Treemap，避免依赖 plotly.express。"""
+def dimension_treemap_chart(df, dim, metric, topn=20, second_dim=None):
+    """
+    结构图智能切换：
+    - 维度项较少时，用横向排名条形图，更清晰、更适合经营汇报；
+    - 维度项数量 >= 8，或存在二级维度时，用 Treemap 展示结构集中和层级贡献。
+    """
     if not dim or dim not in df.columns or metric not in df.columns:
         return
-    g = dimension_summary(df, dim, metric).head(topn).copy()
-    value_col = f"{metric}合计" if f"{metric}合计" in g.columns else metric
+
+    if second_dim == dim or (second_dim is not None and second_dim not in df.columns):
+        second_dim = None
+
+    method = aggregation_method_for_metric(metric) if "aggregation_method_for_metric" in globals() else "sum"
+    agg_func = "mean" if method == "mean" else "sum"
+
+    if second_dim:
+        group_cols = [dim, second_dim]
+    else:
+        group_cols = [dim]
+
+    g = df.groupby(group_cols, dropna=False)[metric].agg(agg_func).reset_index()
+    value_col = metric
     g[value_col] = pd.to_numeric(g[value_col], errors="coerce").fillna(0)
     g = g[g[value_col].abs() > 0]
     if len(g) == 0:
-        show_no_chart_reason(f"{dim}结构地图", "该维度下没有可用于结构地图的有效数值。")
+        show_no_chart_reason(f"{dim}结构分析", "该维度下没有可用于结构分析的有效数值。")
         return
 
-    labels = g[dim].astype(str).tolist()
-    values = g[value_col].abs().astype(float).tolist()
-    custom_values = g[value_col].astype(float).tolist()
+    dim_count = int(df[dim].nunique(dropna=False))
+    use_treemap = bool(second_dim) or dim_count >= 8
 
-    fig = go.Figure(go.Treemap(
-        labels=labels,
-        parents=[""] * len(labels),
-        values=values,
-        customdata=np.array(custom_values).reshape(-1, 1),
-        textinfo="label+value+percent root",
-        hovertemplate=f"{dim}=%{{label}}<br>{metric}=%{{customdata[0]:,.2f}}<br>占比=%{{percentRoot:.1%}}<extra></extra>"
-    ))
-    fig.update_layout(
-        title=f"{dim}结构地图：{metric}贡献分布",
-        margin=dict(l=10, r=10, t=54, b=10)
-    )
-    st.plotly_chart(chart_layout(fig, 520), use_container_width=True)
-    st.caption("结构地图用于观察主指标是否集中在少数维度项上，面积越大表示贡献越高。")
+    if use_treemap:
+        g = g.sort_values(value_col, key=lambda s: s.abs(), ascending=False).head(topn).copy()
+        if second_dim:
+            labels = []
+            parents = []
+            values = []
+            # parent nodes
+            parent_df = g.groupby(dim, dropna=False)[value_col].sum().reset_index()
+            for _, r in parent_df.iterrows():
+                labels.append(str(r[dim]))
+                parents.append("")
+                values.append(abs(float(r[value_col])))
+            # child nodes
+            for _, r in g.iterrows():
+                labels.append(f"{r[second_dim]}")
+                parents.append(str(r[dim]))
+                values.append(abs(float(r[value_col])))
+            title = f"{dim} × {second_dim}结构地图：{metric}贡献分布"
+        else:
+            labels = g[dim].astype(str).tolist()
+            parents = [""] * len(labels)
+            values = g[value_col].abs().astype(float).tolist()
+            title = f"{dim}结构地图：{metric}贡献分布"
+
+        fig = go.Figure(go.Treemap(
+            labels=labels,
+            parents=parents,
+            values=values,
+            textinfo="label+percent root",
+            hovertemplate="类别=%{label}<br>贡献值=%{value:,.2f}<br>占比=%{percentRoot:.1%}<extra></extra>",
+            marker=dict(line=dict(width=1, color="white"))
+        ))
+        fig.update_layout(
+            title=title,
+            margin=dict(l=8, r=8, t=54, b=8)
+        )
+        st.plotly_chart(chart_layout(fig, 520), use_container_width=True)
+        st.caption("结构地图用于观察主指标是否集中在少数维度项上；当维度项较多或存在层级维度时，面积越大表示贡献越高。")
+    else:
+        plot = g.sort_values(value_col, key=lambda s: s.abs(), ascending=True).tail(topn).copy()
+        total = plot[value_col].sum()
+        plot["贡献占比"] = plot[value_col] / total if total != 0 else 0
+        fig = go.Figure(go.Bar(
+            y=plot[dim].astype(str),
+            x=plot[value_col],
+            orientation="h",
+            text=[f"{money_fmt(v)}｜{p:.1%}" for v, p in zip(plot[value_col], plot["贡献占比"])],
+            textposition="outside",
+            hovertemplate=f"{dim}=%{{y}}<br>{metric}=%{{x:,.2f}}<extra></extra>",
+            marker=dict(color="#1E77D3", opacity=0.82)
+        ))
+        fig.update_layout(
+            title=f"{dim}贡献排名：{metric}结构分布",
+            xaxis_title=metric,
+            yaxis_title=dim,
+            margin=dict(l=20, r=80, t=58, b=30)
+        )
+        st.plotly_chart(chart_layout(fig, 500), use_container_width=True)
+
+        top_row = plot.sort_values(value_col, key=lambda s: s.abs(), ascending=False).head(1)
+        if len(top_row):
+            top_name = str(top_row.iloc[0][dim])
+            top_share = float(top_row.iloc[0]["贡献占比"])
+            st.caption(f"当前维度项较少，系统自动采用贡献排名图。{top_name}贡献最高，占比约 {top_share:.1%}，可进一步下钻其客户结构、利润表现和异常风险。")
 
 def contribution_waterfall_chart(comp, dim, metric, p0, p1):
     if comp is None or len(comp) == 0 or "变化额" not in comp.columns:
@@ -3525,7 +3606,7 @@ def contribution_waterfall_chart(comp, dim, metric, p0, p1):
 
 
 def risk_matrix_chart(anomaly_df, main_metric):
-    """风险矩阵：使用 go.Scatter，避免依赖 plotly.express。"""
+    """风险矩阵：用影响程度 × 异常程度识别优先复核对象。"""
     if anomaly_df is None or len(anomaly_df) == 0 or "风险得分" not in anomaly_df.columns or main_metric not in anomaly_df.columns:
         return
     plot = anomaly_df.copy()
@@ -3540,14 +3621,27 @@ def risk_matrix_chart(anomaly_df, main_metric):
     if "风险等级" not in plot.columns:
         plot["风险等级"] = "未分级"
 
-    # 控制气泡大小，避免极端值导致画面失衡
     size_raw = plot[main_metric].abs().replace([np.inf, -np.inf], np.nan).fillna(0)
     if size_raw.max() > size_raw.min():
-        sizes = 10 + (size_raw - size_raw.min()) / (size_raw.max() - size_raw.min()) * 34
+        sizes = 9 + (size_raw - size_raw.min()) / (size_raw.max() - size_raw.min()) * 28
     else:
-        sizes = pd.Series([18] * len(plot), index=plot.index)
+        sizes = pd.Series([17] * len(plot), index=plot.index)
 
     fig = go.Figure()
+
+    # 四象限背景：帮助用户理解坐标含义
+    zones = [
+        (0, 70, 0, 70, "观察区", "#F4F8FC"),
+        (70, 100, 0, 70, "高影响观察区", "#EEF6FF"),
+        (0, 70, 70, 100, "异常关注区", "#FFF7E8"),
+        (70, 100, 70, 100, "优先复核区", "#FFECEC"),
+    ]
+    for x0, x1, y0, y1, _, color in zones:
+        fig.add_shape(
+            type="rect", x0=x0, x1=x1, y0=y0, y1=y1,
+            fillcolor=color, opacity=0.65, layer="below", line_width=0
+        )
+
     for level, sub in plot.groupby("风险等级", dropna=False):
         idx = sub.index
         hover_text = []
@@ -3559,7 +3653,7 @@ def risk_matrix_chart(anomaly_df, main_metric):
                 f"{main_metric}={money_fmt(r.get(main_metric, np.nan))}"
             ]
             if "异常依据" in r:
-                parts.append(f"异常依据={str(r.get('异常依据', ''))[:90]}")
+                parts.append(f"异常依据={str(r.get('异常依据', ''))[:100]}")
             hover_text.append("<br>".join(parts))
         fig.add_trace(go.Scatter(
             x=sub["影响程度"],
@@ -3571,17 +3665,27 @@ def risk_matrix_chart(anomaly_df, main_metric):
             hovertemplate="%{text}<extra></extra>"
         ))
 
-    fig.add_hline(y=70, line_dash="dash", line_color="#E67E22")
-    fig.add_vline(x=70, line_dash="dash", line_color="#E67E22")
+    fig.add_hline(y=70, line_dash="dash", line_color="#D9822B", line_width=2)
+    fig.add_vline(x=70, line_dash="dash", line_color="#D9822B", line_width=2)
+
+    annotations = [
+        dict(x=35, y=35, text="观察区", showarrow=False, font=dict(size=13, color="#74839A")),
+        dict(x=85, y=35, text="高影响<br>观察区", showarrow=False, font=dict(size=13, color="#1E77D3")),
+        dict(x=35, y=86, text="异常<br>关注区", showarrow=False, font=dict(size=13, color="#A76700")),
+        dict(x=85, y=86, text="优先复核区", showarrow=False, font=dict(size=15, color="#B42318")),
+    ]
+
     fig.update_layout(
         title="风险矩阵：影响程度 × 异常程度",
-        xaxis_title="影响程度（主指标分位）",
-        yaxis_title="异常程度（风险得分）",
-        xaxis=dict(range=[0, 105]),
-        yaxis=dict(range=[0, 105])
+        xaxis_title="影响程度（主指标分位，越靠右影响越大）",
+        yaxis_title="异常程度（风险得分，越靠上异常越强）",
+        xaxis=dict(range=[0, 102], zeroline=False),
+        yaxis=dict(range=[0, 102], zeroline=False),
+        annotations=annotations,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
-    st.plotly_chart(chart_layout(fig, 520), use_container_width=True)
-    st.caption("右上角代表同时具备较高影响程度和较高异常程度的经营单元，应优先进入复核清单。")
+    st.plotly_chart(chart_layout(fig, 540), use_container_width=True)
+    st.caption("风险矩阵用于确定核查优先级：右上角代表同时具有较高经营影响和较高异常程度的对象，应优先复核；左下角通常为低优先级观察对象。")
 
 def risk_source_summary_cards(anomaly_df):
     if anomaly_df is None or len(anomaly_df) == 0:
@@ -3590,22 +3694,30 @@ def risk_source_summary_cards(anomaly_df):
     valid = [c for c in score_cols if c in anomaly_df.columns]
     if not valid:
         return
+
     mean_scores = anomaly_df[valid].apply(pd.to_numeric, errors="coerce").mean().sort_values(ascending=False)
     top_source = mean_scores.index[0] if len(mean_scores) else "暂无"
+
+    high_count = 0
+    if "风险等级" in anomaly_df.columns:
+        high_count = int((anomaly_df["风险等级"].astype(str).str.contains("高", na=False)).sum())
+    total = len(anomaly_df)
+
     desc_map = {
-        "主指标偏离": "风险主要来自主指标高低值偏离",
-        "多指标组合偏离": "风险主要来自多个指标同步异常",
-        "业务规则风险": "风险主要来自利润、折扣、成本等业务规则信号",
-        "模型异常贡献": "风险主要来自多指标组合的模型离群程度"
+        "主指标偏离": "当前风险主要来自主指标处于异常高位或低位，建议核查高值/低值经营单元是否符合真实业务表现。",
+        "多指标组合偏离": "当前风险主要来自多个指标同步偏离，建议结合销售额、数量、利润、折扣等字段交叉复核。",
+        "业务规则风险": "当前风险主要来自利润、折扣、成本或比例类业务规则信号，建议核查政策口径和核算逻辑。",
+        "模型异常贡献": "当前风险主要来自多指标组合的离群程度，建议优先查看风险矩阵右上角对象。"
     }
+
     st.markdown(f"""
     <div class="section-card">
         <h3 style="margin-top:0;">风险画像摘要</h3>
+        <p class="small-text"><b>高风险对象：</b>{high_count} / {total} 个。</p>
         <p class="small-text"><b>主要风险来源：</b>{top_source}。{desc_map.get(top_source, "需要结合明细进一步复核。")}</p>
-        <p class="small-text">风险识别用于确定核查优先级，不直接替代业务定性。建议优先查看风险矩阵右上角对象，并结合异常依据、原始单据和业务政策复核。</p>
+        <p class="small-text"><b>使用建议：</b>先根据风险矩阵定位右上角对象，再结合异常依据、原始单据、折扣政策、利润口径和客户/渠道背景进行复核。</p>
     </div>
     """, unsafe_allow_html=True)
-
 
 def query_process_visual():
     steps = [
@@ -4186,7 +4298,7 @@ with tab3:
                     show_no_chart_reason(f"{dim}维度贡献占比 Top10", "该维度下没有可用于饼图的正负有效数值。")
 
             st.markdown("#### 结构地图")
-            dimension_treemap_chart(df, dim, main_metric, topn=20)
+            dimension_treemap_chart(df, dim, main_metric, topn=20, second_dim=next((d for d in selected_dimensions if d != dim), None))
 
             st.dataframe(g, use_container_width=True)
 
