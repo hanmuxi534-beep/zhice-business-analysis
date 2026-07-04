@@ -4123,22 +4123,42 @@ def management_status_summary(df, main_metric, anomaly_df, trend=None, selected_
         if pd.isna(change):
             status = "趋势待确认"
             status_desc = "当前时间序列不足以形成稳定趋势判断。"
-        elif change > 0.1:
-            status = "增长态势"
+        elif change >= 1.5:
+            status = "强劲增长"
             status_desc = f"末期较初期增长约 {change:.1%}，建议进一步查看增长来源。"
+        elif change >= 1.0:
+            status = "高速增长"
+            status_desc = f"末期较初期增长约 {change:.1%}，建议进一步查看增长来源。"
+        elif change >= 0.3:
+            status = "明显增长"
+            status_desc = f"末期较初期增长约 {change:.1%}，建议进一步查看增长来源。"
+        elif change > 0.1:
+            status = "温和增长"
+            status_desc = f"末期较初期增长约 {change:.1%}，建议进一步查看增长来源。"
+        elif change <= -0.5:
+            status = "大幅回落"
+            status_desc = f"末期较初期下降约 {abs(change):.1%}，建议关注拖累维度。"
+        elif change <= -0.3:
+            status = "明显回落"
+            status_desc = f"末期较初期下降约 {abs(change):.1%}，建议关注拖累维度。"
         elif change < -0.1:
-            status = "回落态势"
+            status = "小幅回落"
             status_desc = f"末期较初期下降约 {abs(change):.1%}，建议关注拖累维度。"
         else:
-            status = "相对平稳"
+            status = "基本平稳"
             status_desc = "期初与期末差异不大，可重点观察结构和异常变化。"
     else:
         status = "结构分析为主"
         status_desc = "当前未形成有效时间趋势，系统将优先从维度贡献、结构集中和异常对象进行分析。"
 
     if len(metric_series) > 0:
-        max_mean = metric_series.max() / metric_series.mean() if metric_series.mean() != 0 else np.nan
-        if not pd.isna(max_mean) and max_mean >= 6:
+        # 使用绝对水平衡量集中程度，避免利润等指标均值为负时导致判断失真
+        abs_mean = metric_series.abs().mean()
+        max_mean = metric_series.abs().max() / abs_mean if abs_mean != 0 else np.nan
+        if not pd.isna(max_mean) and max_mean >= 10:
+            structure = "高度长尾集中"
+            struct_desc = "少数高值单元对整体结果影响较大。"
+        elif not pd.isna(max_mean) and max_mean >= 6:
             structure = "长尾集中"
             struct_desc = "少数高值单元对整体结果影响较大。"
         elif not pd.isna(max_mean) and max_mean >= 3:
@@ -4153,8 +4173,12 @@ def management_status_summary(df, main_metric, anomaly_df, trend=None, selected_
 
     if anomaly_df is not None and len(anomaly_df) and "是否经营异常" in anomaly_df.columns:
         abnormal_rate = anomaly_df["是否经营异常"].sum() / max(len(anomaly_df), 1)
-        if abnormal_rate >= 0.1:
+        if abnormal_rate >= 0.20:
+            risk = "高度关注"
+        elif abnormal_rate >= 0.10:
             risk = "重点关注"
+        elif abnormal_rate >= 0.05:
+            risk = "持续关注"
         elif abnormal_rate > 0:
             risk = "局部关注"
         else:
@@ -4163,6 +4187,19 @@ def management_status_summary(df, main_metric, anomaly_df, trend=None, selected_
     else:
         risk = "待识别"
         risk_desc = "暂未形成异常识别结果。"
+
+    if risk in ["高度关注", "重点关注"]:
+        management_tip = "先控风险，再查来源"
+    elif any(k in status for k in ["回落"]):
+        management_tip = "先查拖累，再看结构"
+    elif structure in ["高度长尾集中", "长尾集中"]:
+        management_tip = "先看头部，再查异常"
+    elif any(k in status for k in ["强劲", "高速", "明显增长"]):
+        management_tip = "先找增长来源"
+    elif status == "基本平稳":
+        management_tip = "先稳结构，再找机会"
+    else:
+        management_tip = "先看结构，再查异常"
 
     st.markdown(f"""
     <div class="section-card">
@@ -4185,7 +4222,7 @@ def management_status_summary(df, main_metric, anomaly_df, trend=None, selected_
             </div>
             <div class="asset-card compact">
                 <div class="asset-label">管理提示</div>
-                <div class="asset-value" style="font-size:22px;">先看结构，再查异常</div>
+                <div class="asset-value" style="font-size:22px;">{management_tip}</div>
                 <div class="asset-note">先定位贡献集中的维度，再进入风险识别页复核高风险对象。</div>
             </div>
         </div>
