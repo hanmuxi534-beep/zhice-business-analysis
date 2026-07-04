@@ -420,6 +420,31 @@ def is_progress_like(col):
     return any(k in c for k in ["day_of", "days", "duration", "进度", "天数", "周期", "耗时", "时长"])
 
 
+
+def aggregation_method_for_metric(col):
+    """
+    经营指标聚合口径：
+    - 金额、收入、成本、利润、数量等规模型指标：求和；
+    - 折扣、比率、百分比、单价、均价、时长、周期等水平型指标：平均；
+    这样可以避免“折扣被相加成 3.05 / 4.40”这类明显不合理的问题。
+    """
+    c = str(col).lower()
+    if is_rate_like(col):
+        return "mean"
+    if any(k in c for k in ["price", "unit_price", "avg", "average", "单价", "均价", "平均"]):
+        return "mean"
+    if is_progress_like(col):
+        return "mean"
+    return "sum"
+
+
+def aggregation_label_for_metric(col):
+    method = aggregation_method_for_metric(col)
+    return "平均值" if method == "mean" else "合计"
+
+
+
+
 def parse_numeric_series(s, aggressive=False):
     """稳健数值解析，支持 Excel 数值、逗号、货币符号、万/亿、百分号、Day 12 等。"""
     if pd.api.types.is_numeric_dtype(s):
@@ -1182,9 +1207,13 @@ def trend_interpretation(trend, metric):
     return f"{main_desc}。{recent_desc}。{detail}{high_low}{vol_desc}。"
 
 def dimension_summary(df, dim, metric):
+    # 主指标如果是折扣/比率/单价等水平型指标，核心排序口径用均值；
+    # 如果是销售额/数量/利润等规模型指标，核心排序口径用合计。
+    method = aggregation_method_for_metric(metric)
     g = df.groupby(dim, dropna=False)[metric].agg(["sum", "mean", "count"]).reset_index()
     g.columns = [dim, f"{metric}合计", f"{metric}均值", "记录数"]
-    return g.sort_values(f"{metric}合计", ascending=False)
+    sort_col = f"{metric}均值" if method == "mean" else f"{metric}合计"
+    return g.sort_values(sort_col, ascending=False)
 
 
 def dimension_importance(df, dimensions, metric):
@@ -1888,7 +1917,7 @@ def _build_management_action_table(main_metric, dimensions, anomaly_df=None):
         {
             "管理关注点": "结构集中风险",
             "需要解决的问题": f"{dim_text}下是否存在销售贡献过度集中，导致对单一渠道、客户或业务类型依赖过高",
-            "建议动作": f"围绕{dim_text}进行下钻，比较记录数、均值、利润和折扣，区分正常规模优势与异常集中"
+            "建议动作": f"围绕{dim_text}进行下钻，比较记录数、金额合计、利润表现和平均折扣，区分正常规模优势与异常集中"
         },
         {
             "管理关注点": "异常风险复核",
@@ -2077,7 +2106,10 @@ def anomaly_detection(df, main_metric, numeric_cols, dimensions, date_col=None):
             group_cols.append(d)
 
     if group_cols:
-        unit = temp.groupby(group_cols, dropna=False).agg({c: "sum" for c in agg_cols}).reset_index()
+        # 不同类型经营指标采用不同聚合口径：
+        # 金额/数量/利润等规模指标求和；折扣/比率/单价/时长等水平指标取平均。
+        agg_map = {c: aggregation_method_for_metric(c) for c in agg_cols}
+        unit = temp.groupby(group_cols, dropna=False).agg(agg_map).reset_index()
         unit["记录数"] = temp.groupby(group_cols, dropna=False).size().values
     else:
         unit = temp[agg_cols].copy()
@@ -3716,6 +3748,11 @@ with tab4:
             bar_chart(rc, "风险等级", "数量", "风险等级分布")
 
         st.markdown("### Top 异常经营单元")
+        st.markdown("""
+        <div class="highlight-note">
+        表中金额、数量、利润等规模型指标按经营单元汇总；折扣、比率、单价、时长等水平型指标按平均值展示，避免出现“折扣相加”导致的口径失真。
+        </div>
+        """, unsafe_allow_html=True)
         top_anom = anomaly_df.sort_values("风险得分", ascending=False).head(10)
         st.dataframe(top_anom, use_container_width=True, height=320)
 
