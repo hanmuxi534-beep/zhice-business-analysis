@@ -3487,9 +3487,10 @@ def management_status_summary(df, main_metric, anomaly_df, trend=None, selected_
 
 def dimension_treemap_chart(df, dim, metric, topn=20, second_dim=None):
     """
-    结构图智能切换：
-    - 维度项较少时，用横向排名条形图，更清晰、更适合经营汇报；
-    - 维度项数量 >= 8，或存在二级维度时，用 Treemap 展示结构集中和层级贡献。
+    结构分析图智能展示：
+    1. 单一维度：优先使用横向贡献排名图，直接看各维度项贡献大小与占比；
+    2. 两个维度且类别较少：使用交叉热力图，观察“行维度 × 列维度”的贡献分布；
+    3. 两个维度但类别较多：使用 TopN 组合贡献排名图，避免 Treemap 碎片化和难以解读。
     """
     if not dim or dim not in df.columns or metric not in df.columns:
         return
@@ -3500,86 +3501,94 @@ def dimension_treemap_chart(df, dim, metric, topn=20, second_dim=None):
     method = aggregation_method_for_metric(metric) if "aggregation_method_for_metric" in globals() else "sum"
     agg_func = "mean" if method == "mean" else "sum"
 
-    if second_dim:
-        group_cols = [dim, second_dim]
-    else:
-        group_cols = [dim]
-
-    g = df.groupby(group_cols, dropna=False)[metric].agg(agg_func).reset_index()
-    value_col = metric
-    g[value_col] = pd.to_numeric(g[value_col], errors="coerce").fillna(0)
-    g = g[g[value_col].abs() > 0]
-    if len(g) == 0:
-        show_no_chart_reason(f"{dim}结构分析", "该维度下没有可用于结构分析的有效数值。")
-        return
-
+    # 如果二级维度类别过多，优先仍让主图展示主维度贡献排名；
+    # 组合明细只在下方用 TopN 说明，避免像旧 Treemap 一样碎片化。
     dim_count = int(df[dim].nunique(dropna=False))
-    use_treemap = bool(second_dim) or dim_count >= 8
+    second_count = int(df[second_dim].nunique(dropna=False)) if second_dim else 0
+    show_pair_view = bool(second_dim) and dim_count <= 12 and second_count <= 12
 
-    if use_treemap:
-        g = g.sort_values(value_col, key=lambda s: s.abs(), ascending=False).head(topn).copy()
-        if second_dim:
-            labels = []
-            parents = []
-            values = []
-            # parent nodes
-            parent_df = g.groupby(dim, dropna=False)[value_col].sum().reset_index()
-            for _, r in parent_df.iterrows():
-                labels.append(str(r[dim]))
-                parents.append("")
-                values.append(abs(float(r[value_col])))
-            # child nodes
-            for _, r in g.iterrows():
-                labels.append(f"{r[second_dim]}")
-                parents.append(str(r[dim]))
-                values.append(abs(float(r[value_col])))
-            title = f"{dim} × {second_dim}结构地图：{metric}贡献分布"
-        else:
-            labels = g[dim].astype(str).tolist()
-            parents = [""] * len(labels)
-            values = g[value_col].abs().astype(float).tolist()
-            title = f"{dim}结构地图：{metric}贡献分布"
+    if not show_pair_view:
+        g = df.groupby(dim, dropna=False)[metric].agg(agg_func).reset_index()
+        g[metric] = pd.to_numeric(g[metric], errors="coerce").fillna(0)
+        g = g[g[metric].abs() > 0]
+        if len(g) == 0:
+            show_no_chart_reason(f"{dim}结构分析", "该维度下没有可用于结构分析的有效数值。")
+            return
 
-        fig = go.Figure(go.Treemap(
-            labels=labels,
-            parents=parents,
-            values=values,
-            textinfo="label+percent root",
-            hovertemplate="类别=%{label}<br>贡献值=%{value:,.2f}<br>占比=%{percentRoot:.1%}<extra></extra>",
-            marker=dict(line=dict(width=1, color="white"))
-        ))
-        fig.update_layout(
-            title=title,
-            margin=dict(l=8, r=8, t=54, b=8)
-        )
-        st.plotly_chart(chart_layout(fig, 520), use_container_width=True)
-        st.caption("结构地图用于观察主指标是否集中在少数维度项上；当维度项较多或存在层级维度时，面积越大表示贡献越高。")
-    else:
-        plot = g.sort_values(value_col, key=lambda s: s.abs(), ascending=True).tail(topn).copy()
-        total = plot[value_col].sum()
-        plot["贡献占比"] = plot[value_col] / total if total != 0 else 0
+        total = g[metric].sum()
+        g["贡献占比"] = g[metric] / total if total != 0 else 0
+        plot = g.sort_values(metric, key=lambda s: s.abs(), ascending=True).tail(topn).copy()
+
         fig = go.Figure(go.Bar(
             y=plot[dim].astype(str),
-            x=plot[value_col],
+            x=plot[metric],
             orientation="h",
-            text=[f"{money_fmt(v)}｜{p:.1%}" for v, p in zip(plot[value_col], plot["贡献占比"])],
+            text=[f"{money_fmt(v)}｜{p:.1%}" for v, p in zip(plot[metric], plot["贡献占比"])],
             textposition="outside",
-            hovertemplate=f"{dim}=%{{y}}<br>{metric}=%{{x:,.2f}}<extra></extra>",
-            marker=dict(color="#1E77D3", opacity=0.82)
+            customdata=plot["贡献占比"],
+            hovertemplate=f"{dim}=%{{y}}<br>{metric}=%{{x:,.2f}}<br>贡献占比=%{{customdata:.1%}}<extra></extra>",
+            marker=dict(color="#1E77D3", opacity=0.84)
         ))
         fig.update_layout(
             title=f"{dim}贡献排名：{metric}结构分布",
             xaxis_title=metric,
             yaxis_title=dim,
-            margin=dict(l=20, r=80, t=58, b=30)
+            margin=dict(l=20, r=110, t=58, b=30)
         )
         st.plotly_chart(chart_layout(fig, 500), use_container_width=True)
 
-        top_row = plot.sort_values(value_col, key=lambda s: s.abs(), ascending=False).head(1)
+        top_row = g.sort_values(metric, key=lambda s: s.abs(), ascending=False).head(1)
         if len(top_row):
             top_name = str(top_row.iloc[0][dim])
             top_share = float(top_row.iloc[0]["贡献占比"])
-            st.caption(f"当前维度项较少，系统自动采用贡献排名图。{top_name}贡献最高，占比约 {top_share:.1%}，可进一步下钻其客户结构、利润表现和异常风险。")
+            note = f"贡献排名图用于直接比较各维度项对{metric}的贡献。{top_name}贡献最高，占比约 {top_share:.1%}。"
+            if second_dim and second_count > 12:
+                note += f" 由于“{second_dim}”类别较多，系统优先展示主维度贡献排名，避免层级图过度碎片化。"
+            st.caption(note)
+
+        # 如果存在二级维度但类别过多，补充 TopN 组合表，替代碎片化 Treemap。
+        if second_dim and second_count > 12:
+            combo = df.groupby([dim, second_dim], dropna=False)[metric].agg(agg_func).reset_index()
+            combo[metric] = pd.to_numeric(combo[metric], errors="coerce").fillna(0)
+            combo = combo[combo[metric].abs() > 0]
+            if len(combo):
+                combo_total = combo[metric].sum()
+                combo["贡献占比"] = combo[metric] / combo_total if combo_total != 0 else 0
+                combo["维度组合"] = combo[dim].astype(str) + " × " + combo[second_dim].astype(str)
+                top_combo = combo.sort_values(metric, key=lambda s: s.abs(), ascending=False).head(8)[["维度组合", metric, "贡献占比"]].copy()
+                top_combo["贡献占比"] = top_combo["贡献占比"].map(lambda x: f"{x:.1%}")
+                with st.expander("查看 Top 维度组合贡献", expanded=False):
+                    st.dataframe(top_combo, use_container_width=True, hide_index=True)
+        return
+
+    # 两个维度且类别较少时，用交叉热力图
+    pivot = df.pivot_table(
+        index=dim,
+        columns=second_dim,
+        values=metric,
+        aggfunc=agg_func,
+        fill_value=0
+    )
+    if pivot.size == 0 or np.isclose(np.abs(pivot.values).sum(), 0):
+        show_no_chart_reason(f"{dim} × {second_dim}交叉结构", "两个维度组合下没有可用于展示的有效数值。")
+        return
+
+    fig = go.Figure(go.Heatmap(
+        z=pivot.values,
+        x=[str(c) for c in pivot.columns],
+        y=[str(i) for i in pivot.index],
+        colorscale="Blues",
+        colorbar=dict(title=metric),
+        hovertemplate=f"{dim}=%{{y}}<br>{second_dim}=%{{x}}<br>{metric}=%{{z:,.2f}}<extra></extra>"
+    ))
+    fig.update_layout(
+        title=f"{dim} × {second_dim}交叉结构热力图：{metric}分布",
+        xaxis_title=second_dim,
+        yaxis_title=dim,
+        margin=dict(l=70, r=20, t=58, b=60)
+    )
+    st.plotly_chart(chart_layout(fig, 520), use_container_width=True)
+    st.caption("交叉热力图用于观察两个维度组合下的主指标分布，颜色越深表示该组合贡献越高。")
 
 def contribution_waterfall_chart(comp, dim, metric, p0, p1):
     if comp is None or len(comp) == 0 or "变化额" not in comp.columns:
@@ -4297,7 +4306,7 @@ with tab3:
                 else:
                     show_no_chart_reason(f"{dim}维度贡献占比 Top10", "该维度下没有可用于饼图的正负有效数值。")
 
-            st.markdown("#### 结构地图")
+            st.markdown("#### 结构贡献分析")
             dimension_treemap_chart(df, dim, main_metric, topn=20, second_dim=next((d for d in selected_dimensions if d != dim), None))
 
             st.dataframe(g, use_container_width=True)
