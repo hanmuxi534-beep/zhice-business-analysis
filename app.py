@@ -2874,11 +2874,10 @@ def _add_root_cause_section(doc, df, main_metric, dimensions, anomaly_df):
     _add_loss_persistence_section(doc, df, main_metric, dimensions)
 
 
-def _add_tracking_loop_section(doc):
-    add_heading(doc, "5.3 跟踪闭环与预警机制", 2)
+def _add_tracking_loop_section(doc, section_title="5.3 跟踪闭环与预警机制"):
+    add_heading(doc, section_title, 2)
     add_para(doc, "为避免分析停留在发现问题阶段，建议将本报告输出结果转化为异常核查、整改跟踪和预警规则三类管理动作，形成可持续的经营管控闭环。", indent=True)
     add_dataframe_to_docx(doc, _build_tracking_loop_table(), max_rows=10)
-
 
 def generate_ai_report_docx(ai_text, df, main_metric, dimensions, date_col, anomaly_df, focus_list):
     if not DOCX_AVAILABLE:
@@ -3866,9 +3865,10 @@ def generate_report_docx(df, main_metric, dimensions, date_col, anomaly_df, focu
         _add_root_cause_section(doc, df, main_metric, dimensions, anomaly_df)
 
     add_heading(doc, "五、管理建议与下一步行动", 1)
+    add_heading(doc, "5.1 管理行动清单", 2)
     action_df = _build_management_action_table(main_metric, dimensions, anomaly_df)
     add_dataframe_to_docx(doc, action_df, max_rows=10)
-    _add_tracking_loop_section(doc)
+    _add_tracking_loop_section(doc, section_title="5.2 跟踪闭环与预警机制")
     add_para(doc, "以上建议用于辅助管理层确定核查优先级。实际决策仍需结合企业业务背景、政策制度、预算目标和原始业务单据进行综合判断。", indent=True)
 
     bio = BytesIO()
