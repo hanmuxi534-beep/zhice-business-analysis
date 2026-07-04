@@ -2386,25 +2386,54 @@ def _build_root_cause_table(df, main_metric, dimensions, anomaly_df):
     profit_col = _report_profit_col(df, main_metric)
     discount_col = _report_discount_col(df)
     cost_col = _report_cost_col(df)
-    sales_col = _report_sales_col(df, main_metric)
     product_dim = _report_find_column(df, ["产品类别", "产品品类", "类别", "子类别", "产品名称", "商品", "sku"])
     customer_dim = _report_find_column(df, ["客户细分", "客户类型", "客户名称", "客户"])
     ship_dim = _report_find_column(df, ["邮寄方式", "配送方式", "物流方式", "运输方式"])
-
     rows = []
-    if discount_col:
-        rows.append({"可能根因": "折扣政策或审批异常", "识别线索": f"数据中存在“{discount_col}”字段，可按客户、产品、邮寄方式分层观察高折扣集中位置。", "复核数据": "折扣审批记录、促销活动方案、客户合同价格", "管理动作": "设置折扣分级预警，超过内部P90或审批线的订单进入复核"})
-    if profit_col and product_dim:
-        rows.append({"可能根因": "产品本身毛利偏低", "识别线索": f"结合“{product_dim}”与“{profit_col}”判断亏损是否集中在特定品类或产品。", "复核数据": "产品标准成本、售价策略、采购成本、退换货记录", "管理动作": "对连续亏损品类重估定价、成本与促销策略"})
-    if cost_col or ship_dim:
-        rows.append({"可能根因": "履约或物流成本偏高", "识别线索": f"结合“{ship_dim or '配送维度'}”与“{cost_col or '成本/费用字段'}”判断亏损是否来自履约压力。", "复核数据": "物流单号、运费分摊规则、履约时效、仓配费用", "管理动作": "复核高成本配送方式，优化包邮门槛和履约规则"})
-    if customer_dim:
-        rows.append({"可能根因": "客户结构或合同条款差异", "识别线索": f"结合“{customer_dim}”判断亏损是否集中在企业客户、消费者或特定大客户。", "复核数据": "客户合同、账期政策、返利政策、历史合作记录", "管理动作": "区分战略客户投入与常态化亏损，建立客户盈利分层"})
-    rows.append({"可能根因": "数据录入或口径异常", "识别线索": "当销售额、利润、折扣、成本等多个字段同时处于极端区间时，需排除录入或口径问题。", "复核数据": "原始订单、导入日志、字段映射规则、系统修改记录", "管理动作": "建立异常单据回溯机制，对重复导入、字段错位和异常值设置校验规则"})
-    if discount_col and profit_col:
-        rows.append({"可能根因": "短期促销与常态化定价失控混淆", "识别线索": f"如果高{discount_col}与负{profit_col}长期重复出现，说明可能不只是短期活动。", "复核数据": "促销日历、活动预算、折扣审批、活动后利润复盘", "管理动作": "区分活动期与非活动期，建立促销后复评机制"})
-    return pd.DataFrame(rows)
 
+    rows.append({
+        "根因类别": "人为/审批类：超常折扣",
+        "判定信号": f"{discount_col or '折扣字段'}超过内部P90，且集中在少数客户、订单或业务人员时，优先判断为审批或授权问题。",
+        "区分标准": "偶发1笔先查单据；同一客户/产品≥3次或亏损率≥30%进入专项复核。",
+        "复核材料": "折扣审批记录、客户合同、促销授权、销售人员操作日志",
+        "管理动作": "设置折扣分级审批线，对超过P90或制度阈值的订单自动进入复核。"
+    })
+    rows.append({
+        "根因类别": "产品/成本类：毛利基础偏低",
+        "判定信号": f"若{product_dim or '产品维度'}下销售规模较高但{profit_col or '利润'}长期偏低或为负，说明可能是产品成本或定价问题。",
+        "区分标准": "多个订单持续亏损更偏向产品成本/定价问题；单笔亏损更可能是特殊交易。",
+        "复核材料": "采购成本、标准成本、定价表、产品促销政策、退换货记录",
+        "管理动作": "对长期亏损品类进行成本复核、价格重估和促销ROI复盘。"
+    })
+    rows.append({
+        "根因类别": "物流/履约类：配送成本失衡",
+        "判定信号": f"若亏损集中在{ship_dim or '配送方式'}或高运费/高履约成本订单，说明可能存在物流定价或包邮策略压力。",
+        "区分标准": "高成本配送方式反复亏损属于规则性问题；个别远距离订单亏损属于偶发履约问题。",
+        "复核材料": "物流单据、运费规则、包邮门槛、仓配费用、履约时效",
+        "管理动作": "优化配送方式定价、包邮门槛和履约成本分摊规则。"
+    })
+    rows.append({
+        "根因类别": "系统/数据类：录入或口径异常",
+        "判定信号": "当销售额、利润、折扣、成本等多个字段同时极端异常，或出现不合常理的比例值时，应先排除数据问题。",
+        "区分标准": "单条极端记录优先查录入；批量相同异常优先查导入模板、字段映射或系统规则。",
+        "复核材料": "原始订单、导入日志、字段映射规则、系统修改记录、重复记录清单",
+        "管理动作": "建立导入校验、字段范围校验和异常单据回溯机制。"
+    })
+    rows.append({
+        "根因类别": "活动/促销类：短期让利",
+        "判定信号": "若亏损集中在某一活动期、某一促销批次或某类产品组合，可能是短期促销投入。",
+        "区分标准": "活动期内集中亏损且活动后恢复，属于短期促销；非活动期持续亏损，属于常态化定价失控。",
+        "复核材料": "促销日历、活动预算、活动目标、活动后销售与利润复盘",
+        "管理动作": "促销后必须复盘利润贡献和复购效果，避免单纯追求销售额。"
+    })
+    rows.append({
+        "根因类别": "客户结构类：战略客户或合同条款",
+        "判定信号": f"若亏损集中在{customer_dim or '客户维度'}，尤其是高营收客户但利润较低，应区分战略投入与低质量收入。",
+        "区分标准": "高营收高亏损客户优先复核合同和返利；低营收低利润客户控制资源投入。",
+        "复核材料": "客户合同、返利政策、账期政策、历史合作记录、客户生命周期价值",
+        "管理动作": "建立客户盈利分层，对高营收亏损客户设置专项改善目标。"
+    })
+    return pd.DataFrame(rows)
 
 def _build_tracking_loop_table():
     return pd.DataFrame([
@@ -2516,6 +2545,271 @@ def make_mpl_risk_trend_figure(anomaly_df):
     return fig
 
 
+
+def _safe_profit_rate(profit, sales):
+    try:
+        if sales == 0 or pd.isna(sales):
+            return np.nan
+        return profit / sales
+    except Exception:
+        return np.nan
+
+
+def _build_discount_benchmark_table(df, main_metric):
+    """高折扣 vs 正常折扣横向对标。"""
+    discount_col = _report_discount_col(df)
+    profit_col = _report_profit_col(df, main_metric)
+    sales_col = _report_sales_col(df, main_metric)
+    if not discount_col or discount_col not in df.columns:
+        return pd.DataFrame()
+
+    tmp = df.copy()
+    tmp["_discount"] = pd.to_numeric(tmp[discount_col], errors="coerce")
+    tmp = tmp.dropna(subset=["_discount"])
+    if len(tmp) == 0:
+        return pd.DataFrame()
+
+    q75 = tmp["_discount"].quantile(0.75)
+    q90 = tmp["_discount"].quantile(0.90)
+    tmp["_折扣分层"] = np.where(tmp["_discount"] >= q90, "高折扣组（≥P90）", np.where(tmp["_discount"] >= q75, "关注折扣组（P75-P90）", "正常折扣组（<P75）"))
+
+    rows = []
+    for name, sub in tmp.groupby("_折扣分层", dropna=False):
+        row = {
+            "折扣分层": name,
+            "记录数": int(len(sub)),
+            "平均折扣": f"{sub['_discount'].mean():.2%}" if sub["_discount"].between(-1, 1.5).all() else f"{sub['_discount'].mean():.2f}",
+            f"平均{main_metric}": money_fmt(pd.to_numeric(sub[main_metric], errors="coerce").mean()) if main_metric in sub.columns else "-"
+        }
+        if profit_col and profit_col in sub.columns:
+            p = pd.to_numeric(sub[profit_col], errors="coerce")
+            row[f"平均{profit_col}"] = money_fmt(p.mean())
+            row["亏损率"] = pct_fmt((p < 0).mean())
+        if sales_col and profit_col and sales_col in sub.columns and profit_col in sub.columns:
+            sales = pd.to_numeric(sub[sales_col], errors="coerce").sum()
+            profit = pd.to_numeric(sub[profit_col], errors="coerce").sum()
+            row["利润率"] = pct_fmt(_safe_profit_rate(profit, sales))
+        rows.append(row)
+    order = {"高折扣组（≥P90）": 0, "关注折扣组（P75-P90）": 1, "正常折扣组（<P75）": 2}
+    out = pd.DataFrame(rows)
+    if len(out):
+        out["_排序"] = out["折扣分层"].map(order).fillna(9)
+        out = out.sort_values("_排序").drop(columns=["_排序"])
+    return out
+
+
+def _build_product_profit_table(df, main_metric, dimensions):
+    """产品/品类盈利质量对比。"""
+    profit_col = _report_profit_col(df, main_metric)
+    sales_col = _report_sales_col(df, main_metric)
+    product_dim = _report_find_column(df, ["产品类别", "产品品类", "类别", "子类别", "产品名称", "商品", "sku"])
+    if not product_dim or not profit_col or profit_col not in df.columns:
+        return pd.DataFrame()
+
+    if not sales_col or sales_col not in df.columns:
+        sales_col = main_metric
+
+    tmp = df.copy()
+    tmp["_profit"] = pd.to_numeric(tmp[profit_col], errors="coerce").fillna(0)
+    tmp["_sales"] = pd.to_numeric(tmp[sales_col], errors="coerce").fillna(0)
+    g = tmp.groupby(product_dim, dropna=False).agg(
+        销售额=("_sales", "sum"),
+        利润=("_profit", "sum"),
+        记录数=("_profit", "size"),
+        亏损记录数=("_profit", lambda s: int((s < 0).sum()))
+    ).reset_index()
+    if len(g) == 0:
+        return pd.DataFrame()
+    g["利润率"] = g.apply(lambda r: _safe_profit_rate(r["利润"], r["销售额"]), axis=1)
+    g["亏损率"] = g["亏损记录数"] / g["记录数"].replace(0, np.nan)
+    g = g.sort_values("利润", ascending=False).head(10)
+    return pd.DataFrame({
+        product_dim: g[product_dim].astype(str),
+        "销售额": g["销售额"].map(money_fmt),
+        "利润": g["利润"].map(money_fmt),
+        "利润率": g["利润率"].map(lambda x: pct_fmt(x) if not pd.isna(x) else "-"),
+        "亏损记录数": g["亏损记录数"].astype(int),
+        "亏损率": g["亏损率"].map(lambda x: pct_fmt(x) if not pd.isna(x) else "-")
+    })
+
+
+def _pick_entity_dimension_for_portfolio(df, dimensions):
+    preferred = [
+        ["客户名称", "客户", "customer"],
+        ["产品名称", "商品", "sku", "产品"],
+        ["客户细分", "客户类型", "segment"],
+        ["产品类别", "产品品类", "类别", "category"],
+        ["地区", "区域", "省", "城市", "region"]
+    ]
+    for keys in preferred:
+        c = _report_find_column(df, keys)
+        if c and c in df.columns and not is_id_like(c):
+            return c
+    dims = _report_dimension_candidates(df, dimensions)
+    return dims[0] if dims else None
+
+
+def _build_business_portfolio_table(df, main_metric, dimensions):
+    """高营收高盈利 / 高营收亏损 / 低营收高利润 / 长尾低效四象限。"""
+    profit_col = _report_profit_col(df, main_metric)
+    sales_col = _report_sales_col(df, main_metric)
+    entity_dim = _pick_entity_dimension_for_portfolio(df, dimensions)
+    if not entity_dim or not profit_col or profit_col not in df.columns:
+        return pd.DataFrame()
+    if not sales_col or sales_col not in df.columns:
+        sales_col = main_metric
+
+    tmp = df.copy()
+    tmp["_sales"] = pd.to_numeric(tmp[sales_col], errors="coerce").fillna(0)
+    tmp["_profit"] = pd.to_numeric(tmp[profit_col], errors="coerce").fillna(0)
+    g = tmp.groupby(entity_dim, dropna=False).agg(销售额=("_sales", "sum"), 利润=("_profit", "sum"), 记录数=("_profit", "size")).reset_index()
+    if len(g) < 4:
+        return pd.DataFrame()
+    sales_cut = g["销售额"].median()
+    profit_cut = g["利润"].median()
+    def layer(r):
+        if r["销售额"] >= sales_cut and r["利润"] >= max(0, profit_cut):
+            return "高营收高盈利优质单元"
+        if r["销售额"] >= sales_cut and r["利润"] < 0:
+            return "高营收亏损高危单元"
+        if r["销售额"] < sales_cut and r["利润"] > max(0, profit_cut):
+            return "低营收高利润潜力单元"
+        return "低营收低利润长尾单元"
+    g["经营分层"] = g.apply(layer, axis=1)
+    total_sales = g["销售额"].sum()
+    total_profit = g["利润"].sum()
+    out = g.groupby("经营分层").agg(
+        单元数量=(entity_dim, "count"),
+        销售额=("销售额", "sum"),
+        利润=("利润", "sum")
+    ).reset_index()
+    out["销售额占比"] = out["销售额"] / total_sales if total_sales else np.nan
+    out["利润贡献占比"] = out["利润"] / total_profit if total_profit else np.nan
+    mgmt = {
+        "高营收高盈利优质单元": "重点维护，提炼可复制经验",
+        "高营收亏损高危单元": "优先核查折扣、成本、履约和客户政策",
+        "低营收高利润潜力单元": "评估扩大投放或复制到相近客户/产品",
+        "低营收低利润长尾单元": "控制资源投入，必要时优化或收缩"
+    }
+    return pd.DataFrame({
+        "经营分层": out["经营分层"],
+        "单元数量": out["单元数量"].astype(int),
+        "销售额": out["销售额"].map(money_fmt),
+        "销售额占比": out["销售额占比"].map(lambda x: pct_fmt(x) if not pd.isna(x) else "-"),
+        "利润": out["利润"].map(money_fmt),
+        "利润贡献占比": out["利润贡献占比"].map(lambda x: pct_fmt(x) if not pd.isna(x) else "-"),
+        "管理含义": out["经营分层"].map(mgmt)
+    })
+
+
+def _build_top_loss_entities_table(df, main_metric, dimensions, topn=20):
+    """Top20亏损对象统计，不改变现有图片图表。"""
+    profit_col = _report_profit_col(df, main_metric)
+    if not profit_col or profit_col not in df.columns:
+        return pd.DataFrame()
+    entity_dim = _pick_entity_dimension_for_portfolio(df, dimensions)
+    if not entity_dim:
+        return pd.DataFrame()
+
+    tmp = df.copy()
+    tmp["_profit"] = pd.to_numeric(tmp[profit_col], errors="coerce").fillna(0)
+    loss_total = abs(tmp.loc[tmp["_profit"] < 0, "_profit"].sum())
+    g = tmp.groupby(entity_dim, dropna=False).agg(
+        亏损额=("_profit", lambda s: abs(s[s < 0].sum())),
+        亏损次数=("_profit", lambda s: int((s < 0).sum())),
+        记录数=("_profit", "size"),
+        利润合计=("_profit", "sum")
+    ).reset_index()
+    g = g[g["亏损额"] > 0].sort_values("亏损额", ascending=False).head(topn)
+    if len(g) == 0:
+        return pd.DataFrame()
+    g["亏损占比"] = g["亏损额"] / loss_total if loss_total else np.nan
+    g["亏损类型"] = np.where(g["亏损次数"] == 1, "偶发单笔亏损", np.where(g["亏损次数"] >= 3, "批量/重复亏损", "少量重复亏损"))
+    return pd.DataFrame({
+        "亏损对象": g[entity_dim].astype(str),
+        "亏损额": g["亏损额"].map(money_fmt),
+        "亏损占比": g["亏损占比"].map(lambda x: pct_fmt(x) if not pd.isna(x) else "-"),
+        "亏损次数": g["亏损次数"].astype(int),
+        "亏损率": (g["亏损次数"] / g["记录数"].replace(0, np.nan)).map(lambda x: pct_fmt(x) if not pd.isna(x) else "-"),
+        "亏损类型": g["亏损类型"]
+    })
+
+
+def _build_loss_persistence_table(df, main_metric, dimensions):
+    profit_col = _report_profit_col(df, main_metric)
+    if not profit_col or profit_col not in df.columns:
+        return pd.DataFrame()
+    entity_dim = _pick_entity_dimension_for_portfolio(df, dimensions)
+    if not entity_dim:
+        return pd.DataFrame()
+    tmp = df.copy()
+    tmp["_profit"] = pd.to_numeric(tmp[profit_col], errors="coerce").fillna(0)
+    g = tmp.groupby(entity_dim, dropna=False).agg(
+        亏损次数=("_profit", lambda s: int((s < 0).sum())),
+        总记录数=("_profit", "size"),
+        亏损额=("_profit", lambda s: abs(s[s < 0].sum()))
+    ).reset_index()
+    g = g[g["亏损次数"] > 0]
+    if len(g) == 0:
+        return pd.DataFrame()
+    g["亏损率"] = g["亏损次数"] / g["总记录数"].replace(0, np.nan)
+    def typ(r):
+        if r["亏损次数"] == 1:
+            return "偶发型"
+        if r["亏损次数"] >= 3 or r["亏损率"] >= 0.3:
+            return "常态/批量型"
+        return "重复关注型"
+    g["亏损持续类型"] = g.apply(typ, axis=1)
+    out = g.groupby("亏损持续类型").agg(
+        对象数量=(entity_dim, "count"),
+        亏损次数=("亏损次数", "sum"),
+        亏损额=("亏损额", "sum")
+    ).reset_index()
+    return pd.DataFrame({
+        "亏损持续类型": out["亏损持续类型"],
+        "对象数量": out["对象数量"].astype(int),
+        "亏损次数": out["亏损次数"].astype(int),
+        "亏损额": out["亏损额"].map(money_fmt),
+        "判定标准": out["亏损持续类型"].map({
+            "偶发型": "同一对象仅出现1次亏损，优先核查单据或特殊情形",
+            "重复关注型": "同一对象出现2次亏损，需观察是否扩大",
+            "常态/批量型": "亏损次数≥3或亏损率≥30%，优先进入整改清单"
+        })
+    })
+
+
+def _add_benchmark_and_portfolio_section(doc, df, main_metric, dimensions):
+    add_heading(doc, "3.5 横向对标与经营单元分层", 2)
+    add_para(doc, "横向对标用于比较不同经营条件下的盈利质量差异，避免只看到总体规模而忽略结构性问题。本节重点关注高折扣与正常折扣、产品/品类利润差异，以及优质单元与高危单元的分层。", indent=True)
+
+    discount_df = _build_discount_benchmark_table(df, main_metric)
+    if len(discount_df):
+        add_para(doc, "高折扣组与正常折扣组对比：用于判断折扣是否正在侵蚀利润。", indent=True)
+        add_dataframe_to_docx(doc, discount_df, max_rows=8)
+
+    product_df = _build_product_profit_table(df, main_metric, dimensions)
+    if len(product_df):
+        add_para(doc, "产品/品类盈利质量对比：用于识别哪些品类贡献利润，哪些品类虽然有销售规模但盈利质量较弱。", indent=True)
+        add_dataframe_to_docx(doc, product_df, max_rows=10)
+
+    portfolio_df = _build_business_portfolio_table(df, main_metric, dimensions)
+    if len(portfolio_df):
+        add_para(doc, "经营单元分层：同时展示优质业务、风险业务、潜力业务和长尾业务，避免报告只强调亏损而忽略良性板块。", indent=True)
+        add_dataframe_to_docx(doc, portfolio_df, max_rows=10)
+
+    top_loss_df = _build_top_loss_entities_table(df, main_metric, dimensions, topn=20)
+    if len(top_loss_df):
+        add_para(doc, "Top亏损对象：用于量化头部亏损对象对总体亏损的贡献，判断亏损是否由少数对象集中造成。", indent=True)
+        add_dataframe_to_docx(doc, top_loss_df, max_rows=20)
+
+
+def _add_loss_persistence_section(doc, df, main_metric, dimensions):
+    persistence_df = _build_loss_persistence_table(df, main_metric, dimensions)
+    if len(persistence_df):
+        add_para(doc, "亏损持续性判断：区分偶发单笔亏损与批量/常态化亏损，帮助确定整改优先级。", indent=True)
+        add_dataframe_to_docx(doc, persistence_df, max_rows=8)
+
+
 def _add_multidim_section(doc, df, main_metric, dimensions):
     report_dims = _report_dimension_candidates(df, dimensions)
     if not report_dims:
@@ -2552,6 +2846,8 @@ def _add_multidim_section(doc, df, main_metric, dimensions):
         if len(impact):
             add_dataframe_to_docx(doc, impact, max_rows=8)
 
+    _add_benchmark_and_portfolio_section(doc, df, main_metric, report_dims)
+
 
 def _add_threshold_and_impact_section(doc, df, main_metric, dimensions, anomaly_df, date_col):
     add_heading(doc, "4.2 量化对标与风险影响", 2)
@@ -2575,6 +2871,7 @@ def _add_root_cause_section(doc, df, main_metric, dimensions, anomaly_df):
     add_para(doc, "根因分析不直接将异常归结为单一原因，而是从折扣政策、产品毛利、履约成本、客户结构、数据口径和促销活动等方面进行分层排查，避免建议过于笼统。", indent=True)
     root_df = _build_root_cause_table(df, main_metric, dimensions, anomaly_df)
     add_dataframe_to_docx(doc, root_df, max_rows=10)
+    _add_loss_persistence_section(doc, df, main_metric, dimensions)
 
 
 def _add_tracking_loop_section(doc):
@@ -5052,8 +5349,8 @@ with tab6:
             try:
                 abnormal_count = int(anomaly_df["是否经营异常"].sum()) if len(anomaly_df) else 0
                 top_anom = anomaly_df.sort_values("风险得分", ascending=False).head(5).to_dict(orient="records") if len(anomaly_df) else []
-                sys_p = "你是企业经营分析顾问。请站在管理层阅读者角度，基于系统统计结果生成补充解读和可执行管理建议。不得引用数据中不存在的字段，不要输出报告标题，不要重新生成一、二、三、四、五大纲。重点从多维交叉、量化阈值、亏损冲击、细分根因和跟踪闭环角度补充判断。"
-                user_p = f"主指标：{main_metric}\n关注重点：{'、'.join(focus)}\n数据记录数：{len(df)}\n主指标合计：{df[main_metric].sum()}\n主指标均值：{df[main_metric].mean()}\n维度字段：{selected_dimensions}\n异常经营单元数：{abnormal_count}\nTop异常：{top_anom}\n\n请输出两部分：1）AI综合判断：用2-4段话说明当前数据反映的主要经营问题和管理含义，需关注多维结构、亏损/风险影响、阈值预警和细分根因；2）管理行动清单：用Markdown表格输出“管理关注点、需要解决的问题、建议动作、优先级”。重点说明为什么这些异常值得关注、应该查哪些原始数据、如何形成整改跟踪和预警复评闭环。"
+                sys_p = "你是企业经营分析顾问。请站在管理层阅读者角度，基于系统统计结果生成补充解读和可执行管理建议。不得引用数据中不存在的字段，不要输出报告标题，不要重新生成一、二、三、四、五大纲。重点从多维交叉、横向对标、Top亏损对象、优质业务板块、量化阈值、亏损冲击、细分根因和跟踪闭环角度补充判断。"
+                user_p = f"主指标：{main_metric}\n关注重点：{'、'.join(focus)}\n数据记录数：{len(df)}\n主指标合计：{df[main_metric].sum()}\n主指标均值：{df[main_metric].mean()}\n维度字段：{selected_dimensions}\n异常经营单元数：{abnormal_count}\nTop异常：{top_anom}\n\n请输出两部分：1）AI综合判断：用2-4段话说明当前数据反映的主要经营问题和管理含义，需关注多维结构、横向对标、优质业务板块、Top亏损对象、亏损/风险影响、阈值预警和细分根因；2）管理行动清单：用Markdown表格输出“管理关注点、需要解决的问题、建议动作、优先级”。重点说明为什么这些异常值得关注、应该查哪些原始数据、如何形成整改跟踪和预警复评闭环。"
                 ans, elapsed = call_llm(provider, sys_p, user_p, temperature=0.25)
                 st.success(f"生成完成，耗时 {elapsed:.2f} 秒")
                 render_ai_answer_pretty(ans)
