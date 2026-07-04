@@ -4358,8 +4358,109 @@ def contribution_waterfall_chart(comp, dim, metric, p0, p1):
     st.caption("瀑布图用于解释主指标变化由哪些维度项拉动或拖累，正值代表拉动增长，负值代表拖累下降。")
 
 
+def _risk_unit_dimension_columns(anomaly_df, main_metric):
+    """从异常结果表中推断经营单元字段，用于风险地图悬停和优先复核清单。"""
+    risk_cols = {
+        "记录数", "是否AI异常", "异常得分", "异常依据",
+        "主指标偏离", "多指标组合偏离", "业务规则风险", "模型异常贡献",
+        "风险得分", "风险等级", "是否经营异常", "影响程度", "经营单元",
+        main_metric
+    }
+    candidates = []
+    for c in anomaly_df.columns:
+        if c in risk_cols:
+            continue
+        if str(c).startswith("_"):
+            continue
+        # 数值字段多数是指标，不作为经营单元标签；类别/时间/期间字段优先保留
+        s = anomaly_df[c]
+        if pd.api.types.is_numeric_dtype(s):
+            continue
+        # 过滤过长文本字段，防止把异常依据类文本误当维度
+        sample_len = s.dropna().astype(str).head(20).map(len).median() if s.dropna().shape[0] else 0
+        if sample_len and sample_len > 60:
+            continue
+        candidates.append(c)
+    return candidates[:5]
+
+
+def _risk_unit_label(row, unit_cols, fallback_prefix="经营单元"):
+    """把多个维度字段拼成可读的经营单元名称。"""
+    parts = []
+    for c in unit_cols:
+        val = row.get(c, None)
+        if pd.isna(val):
+            continue
+        val = str(val)
+        if val.strip() == "" or val.lower() == "nan":
+            continue
+        parts.append(f"{c}={val}")
+    if parts:
+        return "｜".join(parts[:4])
+    return f"{fallback_prefix} {getattr(row, 'name', '')}"
+
+
+def build_risk_priority_review_table(anomaly_df, main_metric, topn=10):
+    """生成风险地图右上角/高优先级对象清单。"""
+    if anomaly_df is None or len(anomaly_df) == 0 or "风险得分" not in anomaly_df.columns or main_metric not in anomaly_df.columns:
+        return pd.DataFrame()
+
+    dfp = anomaly_df.copy()
+    dfp[main_metric] = pd.to_numeric(dfp[main_metric], errors="coerce")
+    dfp["风险得分"] = pd.to_numeric(dfp["风险得分"], errors="coerce")
+    dfp = dfp.dropna(subset=[main_metric, "风险得分"])
+    if len(dfp) == 0:
+        return pd.DataFrame()
+
+    dfp["影响程度"] = dfp[main_metric].abs().rank(pct=True) * 100
+    unit_cols = _risk_unit_dimension_columns(dfp, main_metric)
+    dfp["经营单元"] = dfp.apply(lambda r: _risk_unit_label(r, unit_cols), axis=1)
+
+    # 优先取风险矩阵右上角：影响程度>=70 且 风险得分>=70
+    priority = dfp[(dfp["影响程度"] >= 70) & (dfp["风险得分"] >= 70)].copy()
+    source_label = "右上角优先复核对象"
+    if len(priority) == 0 and "风险等级" in dfp.columns:
+        priority = dfp[dfp["风险等级"].astype(str).str.contains("高", na=False)].copy()
+        source_label = "高风险对象"
+    if len(priority) == 0:
+        priority = dfp.sort_values(["风险得分", "影响程度"], ascending=False).head(topn).copy()
+        source_label = "风险得分靠前对象"
+
+    priority = priority.sort_values(["风险得分", "影响程度"], ascending=False).head(topn).copy()
+    priority.insert(0, "优先级", range(1, len(priority) + 1))
+    priority["来源"] = source_label
+    priority["影响程度"] = priority["影响程度"].round(1)
+    priority["风险得分"] = priority["风险得分"].round(1)
+    priority[f"{main_metric}"] = priority[main_metric].map(money_fmt)
+
+    cols = ["优先级", "来源", "经营单元", "影响程度", "风险得分"]
+    if "风险等级" in priority.columns:
+        cols.append("风险等级")
+    cols.append(f"{main_metric}")
+    if "异常依据" in priority.columns:
+        priority["异常依据"] = priority["异常依据"].astype(str).str.slice(0, 120)
+        cols.append("异常依据")
+    return priority[cols]
+
+
+def render_risk_priority_review_table(anomaly_df, main_metric):
+    """在风险地图下方展示可定位的优先复核清单。"""
+    priority = build_risk_priority_review_table(anomaly_df, main_metric, topn=10)
+    if priority is None or len(priority) == 0:
+        st.info("当前风险地图暂未形成可展示的优先复核清单。")
+        return
+
+    st.markdown("#### 右上角优先复核清单")
+    st.markdown("""
+    <div class="highlight-note">
+    该清单用于把风险地图中的点落实到具体经营单元：优先展示“影响程度高、异常程度高”的右上角对象。建议先核查这些对象的异常依据、原始单据、折扣政策、利润口径和客户/渠道背景。
+    </div>
+    """, unsafe_allow_html=True)
+    st.dataframe(priority, use_container_width=True, hide_index=True, height=330)
+
+
 def risk_matrix_chart(anomaly_df, main_metric):
-    """风险矩阵：用影响程度 × 异常程度识别优先复核对象。"""
+    """风险矩阵：用影响程度 × 异常程度识别优先复核对象，并支持悬停定位经营单元。"""
     if anomaly_df is None or len(anomaly_df) == 0 or "风险得分" not in anomaly_df.columns or main_metric not in anomaly_df.columns:
         return
     plot = anomaly_df.copy()
@@ -4374,6 +4475,11 @@ def risk_matrix_chart(anomaly_df, main_metric):
     if "风险等级" not in plot.columns:
         plot["风险等级"] = "未分级"
 
+    unit_cols = _risk_unit_dimension_columns(plot, main_metric)
+    plot["经营单元"] = plot.apply(lambda r: _risk_unit_label(r, unit_cols), axis=1)
+    plot["_异常依据短"] = plot["异常依据"].astype(str).str.slice(0, 120) if "异常依据" in plot.columns else ""
+    plot["_主指标显示"] = plot[main_metric].map(money_fmt)
+
     size_raw = plot[main_metric].abs().replace([np.inf, -np.inf], np.nan).fillna(0)
     if size_raw.max() > size_raw.min():
         sizes = 9 + (size_raw - size_raw.min()) / (size_raw.max() - size_raw.min()) * 28
@@ -4382,7 +4488,6 @@ def risk_matrix_chart(anomaly_df, main_metric):
 
     fig = go.Figure()
 
-    # 四象限背景：帮助用户理解坐标含义
     zones = [
         (0, 70, 0, 70, "观察区", "#F4F8FC"),
         (70, 100, 0, 70, "高影响观察区", "#EEF6FF"),
@@ -4397,26 +4502,53 @@ def risk_matrix_chart(anomaly_df, main_metric):
 
     for level, sub in plot.groupby("风险等级", dropna=False):
         idx = sub.index
-        hover_text = []
-        for _, r in sub.iterrows():
-            parts = [
-                f"风险等级={r.get('风险等级', '')}",
-                f"风险得分={r.get('风险得分', np.nan):.1f}",
-                f"影响程度={r.get('影响程度', np.nan):.1f}",
-                f"{main_metric}={money_fmt(r.get(main_metric, np.nan))}"
-            ]
-            if "异常依据" in r:
-                parts.append(f"异常依据={str(r.get('异常依据', ''))[:100]}")
-            hover_text.append("<br>".join(parts))
+        customdata = np.stack([
+            sub["经营单元"].astype(str),
+            sub["风险等级"].astype(str),
+            sub["风险得分"].round(1).astype(str),
+            sub["影响程度"].round(1).astype(str),
+            sub["_主指标显示"].astype(str),
+            sub["_异常依据短"].astype(str)
+        ], axis=-1)
+
         fig.add_trace(go.Scatter(
             x=sub["影响程度"],
             y=sub["风险得分"],
             mode="markers",
             name=str(level),
             marker=dict(size=sizes.loc[idx], opacity=0.78, line=dict(width=1, color="white")),
-            text=hover_text,
-            hovertemplate="%{text}<extra></extra>"
+            customdata=customdata,
+            hovertemplate=(
+                "<b>经营单元：</b>%{customdata[0]}<br>"
+                "<b>风险等级：</b>%{customdata[1]}<br>"
+                "<b>风险得分：</b>%{customdata[2]}<br>"
+                "<b>影响程度：</b>%{customdata[3]}<br>"
+                f"<b>{main_metric}：</b>%{{customdata[4]}}<br>"
+                "<b>异常依据：</b>%{customdata[5]}"
+                "<extra></extra>"
+            )
         ))
+
+    # 标注右上角优先对象，避免只看到一堆点
+    priority = plot[(plot["影响程度"] >= 70) & (plot["风险得分"] >= 70)].sort_values(["风险得分", "影响程度"], ascending=False).head(5)
+    for _, r in priority.iterrows():
+        label = str(r["经营单元"])
+        if len(label) > 22:
+            label = label[:22] + "…"
+        fig.add_annotation(
+            x=float(r["影响程度"]),
+            y=float(r["风险得分"]),
+            text=label,
+            showarrow=True,
+            arrowhead=2,
+            arrowsize=1,
+            ax=18,
+            ay=-22,
+            font=dict(size=11, color="#B42318"),
+            bgcolor="rgba(255,255,255,0.82)",
+            bordercolor="#F2B8B5",
+            borderwidth=1
+        )
 
     fig.add_hline(y=70, line_dash="dash", line_color="#D9822B", line_width=2)
     fig.add_vline(x=70, line_dash="dash", line_color="#D9822B", line_width=2)
@@ -4434,11 +4566,11 @@ def risk_matrix_chart(anomaly_df, main_metric):
         yaxis_title="异常程度（风险得分，越靠上异常越强）",
         xaxis=dict(range=[0, 102], zeroline=False),
         yaxis=dict(range=[0, 102], zeroline=False),
-        annotations=annotations,
+        annotations=annotations + list(fig.layout.annotations or []),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
-    st.plotly_chart(chart_layout(fig, 540), use_container_width=True)
-    st.caption("风险矩阵用于确定核查优先级：右上角代表同时具有较高经营影响和较高异常程度的对象，应优先复核；左下角通常为低优先级观察对象。")
+    st.plotly_chart(chart_layout(fig, 560), use_container_width=True)
+    st.caption("风险矩阵用于确定核查优先级：右上角代表同时具有较高经营影响和较高异常程度的对象；鼠标悬停可查看具体经营单元、风险得分和异常依据。")
 
 def risk_source_summary_cards(anomaly_df):
     if anomaly_df is None or len(anomaly_df) == 0:
@@ -5185,6 +5317,8 @@ with tab4:
             risk_matrix_chart(anomaly_df, main_metric)
         with c_map2:
             risk_source_summary_cards(anomaly_df)
+
+        render_risk_priority_review_table(anomaly_df, main_metric)
 
         c1, c2 = st.columns(2)
         with c1:
