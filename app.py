@@ -3626,6 +3626,19 @@ def data_understanding_summary(score, main_metric, metric_candidates, dimension_
     governance_flow_summary(score, main_metric, metric_candidates, dimension_candidates, date_candidates, clean_summary)
 
 # ============================================================
+# 主功能页签
+# ============================================================
+
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "🧩 数据治理",
+    "🏠 经营态势",
+    "📊 经营洞察",
+    "⚠️ 风险识别",
+    "💬 问数助手",
+    "📝 决策简报"
+])
+
+# ============================================================
 # Tab 1
 # ============================================================
 
