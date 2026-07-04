@@ -3404,16 +3404,215 @@ def gauge_chart(score):
 
 
 
+
+def management_status_summary(df, main_metric, anomaly_df, trend=None, selected_dimensions=None):
+    """经营态势页摘要卡：让用户先看到当前经营状态，而不是只看数字。"""
+    metric_series = pd.to_numeric(df[main_metric], errors="coerce").dropna()
+    if trend is not None and len(trend) >= 2 and main_metric in trend.columns:
+        first = pd.to_numeric(trend[main_metric], errors="coerce").iloc[0]
+        last = pd.to_numeric(trend[main_metric], errors="coerce").iloc[-1]
+        change = (last - first) / abs(first) if first != 0 else np.nan
+        if pd.isna(change):
+            status = "待观察"
+            status_desc = "趋势变化暂无法稳定计算"
+        elif change > 0.1:
+            status = "增长"
+            status_desc = f"末期较初期增长约 {change:.1%}"
+        elif change < -0.1:
+            status = "回落"
+            status_desc = f"末期较初期下降约 {abs(change):.1%}"
+        else:
+            status = "平稳"
+            status_desc = "期初与期末差异不大"
+    else:
+        status = "结构观察"
+        status_desc = "当前未形成时间趋势，重点观察结构分布"
+
+    if len(metric_series) > 0:
+        max_mean = metric_series.max() / metric_series.mean() if metric_series.mean() != 0 else np.nan
+        if not pd.isna(max_mean) and max_mean >= 6:
+            structure = "长尾集中"
+            struct_desc = "少数高值单元对整体影响较大"
+        elif not pd.isna(max_mean) and max_mean >= 3:
+            structure = "适度集中"
+            struct_desc = "存在一定高值集中现象"
+        else:
+            structure = "相对均衡"
+            struct_desc = "极端高值影响相对有限"
+    else:
+        structure = "待观察"
+        struct_desc = "主指标有效值不足"
+
+    if anomaly_df is not None and len(anomaly_df) and "是否经营异常" in anomaly_df.columns:
+        abnormal_rate = anomaly_df["是否经营异常"].sum() / max(len(anomaly_df), 1)
+        if abnormal_rate >= 0.1:
+            risk = "重点关注"
+        elif abnormal_rate > 0:
+            risk = "局部关注"
+        else:
+            risk = "正常"
+        risk_desc = f"异常占比约 {abnormal_rate:.1%}"
+    else:
+        risk = "待识别"
+        risk_desc = "暂未形成异常结果"
+
+    st.markdown(f"""
+    <div class="section-card">
+        <h3 style="margin-top:0;">管理层态势摘要</h3>
+        <div class="asset-grid-compact">
+            <div class="asset-card compact"><div class="asset-label">当前表现</div><div class="asset-value" style="font-size:26px;">{status}</div><div class="asset-note">{status_desc}</div></div>
+            <div class="asset-card compact"><div class="asset-label">结构特征</div><div class="asset-value" style="font-size:26px;">{structure}</div><div class="asset-note">{struct_desc}</div></div>
+            <div class="asset-card compact"><div class="asset-label">风险状态</div><div class="asset-value" style="font-size:26px;">{risk}</div><div class="asset-note">{risk_desc}</div></div>
+            <div class="asset-card compact"><div class="asset-label">管理提示</div><div class="asset-value" style="font-size:22px;">先看总览</div><div class="asset-note">再进入风险识别页下钻异常对象</div></div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def dimension_treemap_chart(df, dim, metric, topn=20):
+    if not dim or dim not in df.columns or metric not in df.columns:
+        return
+    g = dimension_summary(df, dim, metric).head(topn).copy()
+    value_col = f"{metric}合计" if f"{metric}合计" in g.columns else metric
+    g[value_col] = pd.to_numeric(g[value_col], errors="coerce").fillna(0)
+    g = g[g[value_col].abs() > 0]
+    if len(g) == 0:
+        show_no_chart_reason(f"{dim}结构地图", "该维度下没有可用于结构地图的有效数值。")
+        return
+    fig = px.treemap(
+        g,
+        path=[dim],
+        values=value_col,
+        color=value_col,
+        title=f"{dim}结构地图：{metric}贡献分布",
+        hover_data={value_col: ":,.2f"}
+    )
+    fig.update_traces(textinfo="label+value+percent parent")
+    st.plotly_chart(chart_layout(fig, 520), use_container_width=True)
+    st.caption("结构地图用于观察主指标是否集中在少数维度项上，面积越大表示贡献越高。")
+
+
+def contribution_waterfall_chart(comp, dim, metric, p0, p1):
+    if comp is None or len(comp) == 0 or "变化额" not in comp.columns:
+        return
+    plot = comp.sort_values("变化额", key=lambda s: s.abs(), ascending=False).head(12).copy()
+    total_change = plot["变化额"].sum()
+    fig = go.Figure(go.Waterfall(
+        name="变化贡献",
+        orientation="v",
+        measure=["relative"] * len(plot) + ["total"],
+        x=plot[dim].astype(str).tolist() + ["合计变化"],
+        y=plot["变化额"].astype(float).tolist() + [total_change],
+        text=[money_fmt(v) for v in plot["变化额"].astype(float).tolist()] + [money_fmt(total_change)],
+        textposition="outside"
+    ))
+    fig.update_layout(
+        title=f"{p0} 至 {p1} 的{metric}变化归因瀑布图",
+        xaxis_title=dim,
+        yaxis_title="变化额",
+        showlegend=False
+    )
+    st.plotly_chart(chart_layout(fig, 520), use_container_width=True)
+    st.caption("瀑布图用于解释主指标变化由哪些维度项拉动或拖累，正值代表拉动增长，负值代表拖累下降。")
+
+
+def risk_matrix_chart(anomaly_df, main_metric):
+    if anomaly_df is None or len(anomaly_df) == 0 or "风险得分" not in anomaly_df.columns or main_metric not in anomaly_df.columns:
+        return
+    plot = anomaly_df.copy()
+    plot[main_metric] = pd.to_numeric(plot[main_metric], errors="coerce")
+    plot["风险得分"] = pd.to_numeric(plot["风险得分"], errors="coerce")
+    plot = plot.dropna(subset=[main_metric, "风险得分"])
+    if len(plot) < 3:
+        st.info("当前异常样本不足，暂不生成风险矩阵。")
+        return
+    plot["影响程度"] = plot[main_metric].abs().rank(pct=True) * 100
+    hover_cols = [c for c in plot.columns if c not in ["异常依据"]][:8]
+    fig = px.scatter(
+        plot,
+        x="影响程度",
+        y="风险得分",
+        color="风险等级" if "风险等级" in plot.columns else None,
+        size=main_metric,
+        hover_data=hover_cols,
+        title="风险矩阵：影响程度 × 异常程度"
+    )
+    fig.add_hline(y=70, line_dash="dash", line_color="#E67E22")
+    fig.add_vline(x=70, line_dash="dash", line_color="#E67E22")
+    fig.update_layout(xaxis_title="影响程度（主指标分位）", yaxis_title="异常程度（风险得分）")
+    st.plotly_chart(chart_layout(fig, 520), use_container_width=True)
+    st.caption("右上角代表同时具备较高影响程度和较高异常程度的经营单元，应优先进入复核清单。")
+
+
+def risk_source_summary_cards(anomaly_df):
+    if anomaly_df is None or len(anomaly_df) == 0:
+        return
+    score_cols = ["主指标偏离", "多指标组合偏离", "业务规则风险", "模型异常贡献"]
+    valid = [c for c in score_cols if c in anomaly_df.columns]
+    if not valid:
+        return
+    mean_scores = anomaly_df[valid].apply(pd.to_numeric, errors="coerce").mean().sort_values(ascending=False)
+    top_source = mean_scores.index[0] if len(mean_scores) else "暂无"
+    desc_map = {
+        "主指标偏离": "风险主要来自主指标高低值偏离",
+        "多指标组合偏离": "风险主要来自多个指标同步异常",
+        "业务规则风险": "风险主要来自利润、折扣、成本等业务规则信号",
+        "模型异常贡献": "风险主要来自多指标组合的模型离群程度"
+    }
+    st.markdown(f"""
+    <div class="section-card">
+        <h3 style="margin-top:0;">风险画像摘要</h3>
+        <p class="small-text"><b>主要风险来源：</b>{top_source}。{desc_map.get(top_source, "需要结合明细进一步复核。")}</p>
+        <p class="small-text">风险识别用于确定核查优先级，不直接替代业务定性。建议优先查看风险矩阵右上角对象，并结合异常依据、原始单据和业务政策复核。</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def query_process_visual():
+    steps = [
+        ("用户问题", "自然语言输入"),
+        ("字段解析", "匹配指标/维度/时间"),
+        ("SQL生成", "调用大模型生成查询"),
+        ("数据库执行", "在上传数据上执行"),
+        ("系统校验", "检查字段/结果/评分"),
+        ("AI回答", "输出结论与建议"),
+    ]
+    html = '<div class="section-card"><h3 style="margin-top:0;">问数过程可信链路</h3><div style="display:flex;gap:10px;flex-wrap:wrap;">'
+    for i, (title, desc) in enumerate(steps, 1):
+        html += f'<div style="flex:1;min-width:135px;background:#F3F8FF;border:1px solid #D9EAFF;border-radius:16px;padding:12px 14px;"><div style="font-size:13px;color:#1E77D3;font-weight:900;">STEP {i}</div><div style="font-size:16px;color:#10213F;font-weight:950;margin-top:4px;">{title}</div><div style="font-size:13px;color:#66758C;margin-top:5px;">{desc}</div></div>'
+    html += '</div></div>'
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def recommend_followup_questions(question, main_metric, selected_dimensions, numeric_cols):
+    dim = selected_dimensions[0] if selected_dimensions else "主要维度"
+    qlist = [
+        f"{main_metric}最高的{dim}是什么？",
+        f"哪些{dim}的{main_metric}增长最快？",
+        f"{main_metric}较高的对象是否存在异常风险？",
+    ]
+    # 加入利润/折扣类追问
+    for c in numeric_cols:
+        if "利润" in str(c) or "收益" in str(c):
+            qlist.append(f"{main_metric}高但{c}低的对象有哪些？")
+            break
+    for c in numeric_cols:
+        if is_rate_like(c) or "折扣" in str(c):
+            qlist.append(f"{c}较高的对象对{main_metric}有什么影响？")
+            break
+    return qlist[:5]
+
+
 def governance_health_gauge(health_score):
     level, desc = health_level(health_score)
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=float(health_score),
-        number={"suffix": " 分", "font": {"size": 34, "color": "#071F43"}},
-        title={"text": f"数据健康度<br><span style='font-size:14px;color:#66758C'>{level}｜{desc}</span>"},
+        number={"suffix": " 分", "font": {"size": 30, "color": "#071F43"}},
+        title={"text": "数据健康度", "font": {"size": 18, "color": "#10213F"}},
         gauge={
-            "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "#DDE6F1"},
-            "bar": {"color": "#1E77D3"},
+            "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "#DDE6F1", "tickfont": {"size": 12}},
+            "bar": {"color": "#1E77D3", "thickness": 0.24},
             "bgcolor": "white",
             "borderwidth": 1,
             "bordercolor": "#E5EBF3",
@@ -3423,20 +3622,24 @@ def governance_health_gauge(health_score):
                 {"range": [80, 100], "color": "#EAF8F0"}
             ],
             "threshold": {
-                "line": {"color": "#123A63", "width": 4},
+                "line": {"color": "#123A63", "width": 3},
                 "thickness": 0.75,
                 "value": float(health_score)
             }
-        }
+        },
+        domain={"x": [0, 1], "y": [0.05, 0.9]}
     ))
     fig.update_layout(
-        height=310,
-        margin=dict(l=20, r=20, t=48, b=16),
+        height=250,
+        margin=dict(l=10, r=10, t=42, b=8),
         paper_bgcolor="#FFFFFF",
-        font=dict(family="Microsoft YaHei, PingFang SC, Arial", size=15)
+        font=dict(family="Microsoft YaHei, PingFang SC, Arial", size=14)
     )
     st.plotly_chart(fig, use_container_width=True)
-
+    st.markdown(
+        f'<div class="detail-expander-note" style="text-align:center;margin-top:-12px;"><b>{level}</b>｜{desc}</div>',
+        unsafe_allow_html=True
+    )
 
 def governance_asset_overview_cards(health_score, clean_summary, meta, metric_candidates, dimension_candidates, date_candidates, numeric_report, quality_report):
     rows = int(clean_summary.get("清洗后行数", 0))
@@ -3773,23 +3976,21 @@ with tab1:
     st.dataframe(field_asset_table(meta, metric_candidates, dimension_candidates, date_candidates).head(20), use_container_width=True, height=420)
 
     st.markdown("### 明细追溯")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        with st.expander("查看完整字段语义识别表", expanded=False):
-            st.dataframe(meta, use_container_width=True, height=420)
-    with c2:
-        with st.expander("查看数据质量处理日志", expanded=False):
-            st.dataframe(quality_report, use_container_width=True)
-    with c3:
-        with st.expander("查看数值转换检查", expanded=False):
-            st.dataframe(numeric_report, use_container_width=True)
+    with st.expander("查看完整字段语义识别表", expanded=False):
+        st.dataframe(meta, use_container_width=True, height=420)
+
+    with st.expander("查看数据质量处理日志", expanded=False):
+        st.dataframe(quality_report, use_container_width=True, height=360)
+
+    with st.expander("查看数值转换检查", expanded=False):
+        st.dataframe(numeric_report, use_container_width=True, height=360)
 
     with st.expander("查看图表可绘制性诊断", expanded=False):
         st.markdown('<div class="detail-expander-note">如果某张图无法形成有效展示，优先查看这里。有效数值数为0或唯一值过少时，系统会提示原因，而不是显示空白图。</div>', unsafe_allow_html=True)
-        st.dataframe(chart_data_diagnostic(df, main_metric, numeric_cols, selected_dimensions), use_container_width=True)
+        st.dataframe(chart_data_diagnostic(df, main_metric, numeric_cols, selected_dimensions), use_container_width=True, height=360)
 
     with st.expander("查看清洗后数据预览", expanded=False):
-        st.dataframe(df.head(30), use_container_width=True)
+        st.dataframe(df.head(30), use_container_width=True, height=360)
 
 
 # ============================================================
@@ -3809,6 +4010,9 @@ with tab2:
         kpi_card(f"{main_metric}最大值", money_fmt(df[main_metric].max()), "用于识别高值记录")
     with c4:
         kpi_card("异常经营单元", f"{abnormal_count}", "中高风险单元数量")
+
+    overall_trend_for_summary = build_trend(df, valid_date_col, main_metric) if valid_date_col else None
+    management_status_summary(df, main_metric, anomaly_df, overall_trend_for_summary, selected_dimensions)
 
     if valid_date_col:
         st.markdown("### 核心趋势")
@@ -3942,6 +4146,9 @@ with tab3:
                 else:
                     show_no_chart_reason(f"{dim}维度贡献占比 Top10", "该维度下没有可用于饼图的正负有效数值。")
 
+            st.markdown("#### 结构地图")
+            dimension_treemap_chart(df, dim, main_metric, topn=20)
+
             st.dataframe(g, use_container_width=True)
 
             importance = dimension_importance(df, selected_dimensions, main_metric)
@@ -3963,7 +4170,7 @@ with tab3:
                     p1 = st.selectbox("对比结束时间", periods, index=len(periods)-1, key="contrib_p1")
                 comp = contribution_analysis(df, valid_date_col, dim, main_metric, p0, p1)
                 if len(comp):
-                    bar_chart(comp.head(15), dim, "变化额", f"{p0} 至 {p1} 的{main_metric}变化贡献")
+                    contribution_waterfall_chart(comp, dim, main_metric, p0, p1)
                     st.dataframe(comp, use_container_width=True)
                     st.info("贡献度分析用于识别两个指定时间段之间，主指标变化主要由哪些维度项推动。正值代表拉动增长，负值代表拖累下降。")
                 else:
@@ -4068,6 +4275,13 @@ with tab4:
         with c4:
             kpi_card("异常占比", pct_fmt(len(abnormal) / max(len(anomaly_df), 1)), "异常单元 / 全部单元")
 
+        st.markdown("### 风险地图")
+        c_map1, c_map2 = st.columns([1.35, 0.9])
+        with c_map1:
+            risk_matrix_chart(anomaly_df, main_metric)
+        with c_map2:
+            risk_source_summary_cards(anomaly_df)
+
         c1, c2 = st.columns(2)
         with c1:
             fig = go.Figure(go.Histogram(x=anomaly_df["风险得分"], nbinsx=20))
@@ -4145,6 +4359,8 @@ with tab5:
     </div>
     """, unsafe_allow_html=True)
 
+    query_process_visual()
+
     with st.expander("查看问数任务综合评分规则"):
         st.markdown("""
         **问数任务综合评分**用于比较不同大模型在本轮数据问数任务中的表现，不等同于严格人工标注准确率。评分规则如下：
@@ -4193,6 +4409,11 @@ with tab5:
                         pack["系统校验"] = build_query_validation(pack, question, df)
 
                 render_llm_query_pack(pack, question, df, meta)
+
+                if pack.get("是否成功"):
+                    st.markdown("#### 推荐追问")
+                    followups = recommend_followup_questions(question, main_metric, selected_dimensions, numeric_cols)
+                    st.markdown(" ".join([f'<span class="governance-step">{q}</span>' for q in followups]), unsafe_allow_html=True)
 
                 st.session_state["llm_records"].append({
                     "模型": provider,
