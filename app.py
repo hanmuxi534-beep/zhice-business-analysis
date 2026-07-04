@@ -2172,6 +2172,417 @@ def _add_risk_review_section(doc, anomaly_df, main_metric, dimensions, section_t
         add_dataframe_to_docx(doc, review, max_rows=5)
     add_para(doc, "管理含义：高风险对象通常不是由单一指标造成，而是由高值偏离、多指标同步偏离、折扣/利润等业务规则风险叠加形成。应优先复核原始业务单据、折扣政策、成本核算和审批记录。", indent=True)
 
+
+def _report_find_column(df, keywords, exclude=None):
+    exclude = set(exclude or [])
+    for c in df.columns:
+        if c in exclude:
+            continue
+        s = str(c).lower()
+        if any(str(k).lower() in s for k in keywords):
+            return c
+    return None
+
+
+def _report_dimension_candidates(df, dimensions):
+    """综合用户选择和字段名自动补充核心经营维度，避免简报只分析单一维度。"""
+    result = []
+    seen = set()
+
+    def _add(c):
+        if c and c in df.columns and c not in seen and not is_id_like(c):
+            # 数值字段通常不作为维度
+            num = parse_numeric_series(df[c], aggressive=True)
+            non_na = df[c].notna().sum()
+            numeric_ratio = num.notna().sum() / max(non_na, 1)
+            unique_n = df[c].nunique(dropna=False)
+            if numeric_ratio < 0.75 and 1 < unique_n <= max(80, int(len(df) * 0.2)):
+                result.append(c)
+                seen.add(c)
+
+    # 先按经营管理常见维度补齐
+    preferred_groups = [
+        ["客户细分", "客户类型", "客户类别", "细分", "segment"],
+        ["地区", "区域", "大区", "省", "省_自治区", "城市", "region", "province", "state", "city"],
+        ["产品类别", "产品品类", "品类", "类别", "category"],
+        ["子类别", "子品类", "sub-category", "subcategory"],
+        ["邮寄方式", "配送方式", "物流方式", "运输方式", "ship", "shipping", "delivery"],
+    ]
+    for keys in preferred_groups:
+        _add(_report_find_column(df, keys))
+
+    # 再加入用户实际选择维度
+    for d in dimensions or []:
+        _add(d)
+
+    return result[:5]
+
+
+def _report_profit_col(df, main_metric=None):
+    if main_metric and any(k in str(main_metric).lower() for k in ["profit", "利润", "收益", "毛利"]):
+        return main_metric
+    return _report_find_column(df, ["利润", "profit", "收益", "毛利"])
+
+
+def _report_discount_col(df):
+    return _report_find_column(df, ["折扣", "discount", "优惠", "让利"])
+
+
+def _report_cost_col(df):
+    return _report_find_column(df, ["成本", "费用", "运费", "物流", "履约", "cost", "expense", "freight"])
+
+
+def _report_sales_col(df, main_metric=None):
+    if main_metric and any(k in str(main_metric).lower() for k in ["sales", "销售", "收入", "营收", "金额"]):
+        return main_metric
+    return _report_find_column(df, ["销售额", "销售金额", "收入", "营收", "sales", "revenue", "amount"])
+
+
+def _agg_metric_for_report(df, dim, metric):
+    method = aggregation_method_for_metric(metric) if "aggregation_method_for_metric" in globals() else "sum"
+    agg_func = "mean" if method == "mean" else "sum"
+    g = df.groupby(dim, dropna=False)[metric].agg(agg_func).reset_index()
+    g[metric] = pd.to_numeric(g[metric], errors="coerce").fillna(0)
+    return g
+
+
+def _build_multidim_report_table(df, main_metric, dimensions):
+    rows = []
+    total = pd.to_numeric(df[main_metric], errors="coerce").sum()
+    profit_col = _report_profit_col(df, main_metric)
+    discount_col = _report_discount_col(df)
+    for dim in _report_dimension_candidates(df, dimensions):
+        g = _agg_metric_for_report(df, dim, main_metric)
+        if len(g) == 0:
+            continue
+        top = g.sort_values(main_metric, key=lambda s: s.abs(), ascending=False).head(1)
+        if len(top) == 0:
+            continue
+        top_name = str(top.iloc[0][dim])
+        top_value = float(top.iloc[0][main_metric])
+        share = top_value / total if total != 0 else np.nan
+
+        loss_text = "-"
+        if profit_col and profit_col in df.columns:
+            p = pd.to_numeric(df[profit_col], errors="coerce")
+            loss_n = int((p < 0).sum())
+            loss_sum = float(abs(p[p < 0].sum())) if loss_n else 0.0
+            if dim in df.columns:
+                loss_by_dim = df.assign(_p=p).groupby(dim, dropna=False)["_p"].apply(lambda s: abs(s[s < 0].sum())).reset_index()
+                if len(loss_by_dim):
+                    loss_top = loss_by_dim.sort_values("_p", ascending=False).head(1)
+                    loss_text = f"{loss_top.iloc[0][dim]}亏损额最高：{money_fmt(loss_top.iloc[0]['_p'])}"
+            if loss_text == "-":
+                loss_text = f"亏损记录{loss_n}条，亏损额{money_fmt(loss_sum)}"
+
+        disc_text = "-"
+        if discount_col and discount_col in df.columns:
+            dval = pd.to_numeric(df[discount_col], errors="coerce")
+            disc_text = f"平均{discount_col}：{dval.mean():.2%}" if dval.dropna().between(-1, 1.5).all() else f"平均{discount_col}：{dval.mean():.2f}"
+
+        rows.append({
+            "分析维度": dim,
+            "最高贡献项": top_name,
+            f"{main_metric}贡献": money_fmt(top_value),
+            "贡献占比": pct_fmt(share) if not pd.isna(share) else "-",
+            "亏损/风险提示": loss_text,
+            "折扣/比例提示": disc_text
+        })
+    return pd.DataFrame(rows)
+
+
+def _build_threshold_table(df, main_metric, anomaly_df, date_col=None):
+    rows = []
+    discount_col = _report_discount_col(df)
+    profit_col = _report_profit_col(df, main_metric)
+    sales_col = _report_sales_col(df, main_metric)
+
+    if discount_col and discount_col in df.columns:
+        s = pd.to_numeric(df[discount_col], errors="coerce").dropna()
+        if len(s):
+            q75, q90 = s.quantile(0.75), s.quantile(0.90)
+            rows.append({
+                "监控项": f"{discount_col}水平",
+                "当前口径": f"P75={q75:.2%}，P90={q90:.2%}" if s.between(-1, 1.5).all() else f"P75={q75:.2f}，P90={q90:.2f}",
+                "健康阈值/警戒线": "建议将P90作为内部预警线，并允许企业按审批制度自定义阈值",
+                "管理含义": "用于识别超常折扣、促销让利或审批异常"
+            })
+
+    if profit_col and profit_col in df.columns:
+        p = pd.to_numeric(df[profit_col], errors="coerce").fillna(0)
+        loss_sum = abs(p[p < 0].sum())
+        total_profit = p.sum()
+        denom = abs(total_profit) if total_profit != 0 else max(abs(p).sum(), 1)
+        loss_ratio = loss_sum / denom
+        rows.append({
+            "监控项": "亏损冲击",
+            "当前口径": f"亏损额={money_fmt(loss_sum)}，亏损/利润基数={pct_fmt(loss_ratio)}",
+            "健康阈值/警戒线": "建议亏损冲击超过10%进入关注，超过20%进入重点复核",
+            "管理含义": "衡量亏损对整体盈利质量的侵蚀程度"
+        })
+
+    if anomaly_df is not None and len(anomaly_df) and "是否经营异常" in anomaly_df.columns:
+        unit_n = len(anomaly_df)
+        abnormal_n = int(anomaly_df["是否经营异常"].sum())
+        high_n = int((anomaly_df.get("风险等级", pd.Series(index=anomaly_df.index, dtype=str)).astype(str) == "高风险").sum()) if "风险等级" in anomaly_df.columns else 0
+        rows.append({
+            "监控项": "异常单元占比",
+            "当前口径": f"异常{abnormal_n}/{unit_n}，高风险{high_n}个",
+            "健康阈值/警戒线": "建议异常占比超过5%提示关注，超过10%进入专项复核",
+            "管理含义": "衡量风险是局部问题还是系统性扩散"
+        })
+
+        if main_metric in anomaly_df.columns:
+            total_metric = pd.to_numeric(df[main_metric], errors="coerce").sum()
+            high = anomaly_df[anomaly_df.get("风险等级", "") == "高风险"] if "风险等级" in anomaly_df.columns else anomaly_df[anomaly_df["是否经营异常"]]
+            high_metric = pd.to_numeric(high[main_metric], errors="coerce").sum()
+            impact = high_metric / total_metric if total_metric != 0 else np.nan
+            rows.append({
+                "监控项": "高风险影响面",
+                "当前口径": f"高风险单元{main_metric}合计={money_fmt(high_metric)}，占比={pct_fmt(impact) if not pd.isna(impact) else '-'}",
+                "健康阈值/警戒线": "建议高风险影响面超过10%进入管理层关注清单",
+                "管理含义": "衡量风险对象对总体经营结果的影响程度"
+            })
+
+    if date_col:
+        rows.append({
+            "监控项": "趋势复评",
+            "当前口径": f"以{date_col}为时间字段，可按月/期跟踪异常数量变化",
+            "健康阈值/警戒线": "建议异常数量环比上升超过20%触发预警",
+            "管理含义": "判断风险是逐期恶化、短期波动还是趋于稳定"
+        })
+
+    return pd.DataFrame(rows)
+
+
+def _build_loss_impact_table(df, main_metric, dimensions, anomaly_df):
+    profit_col = _report_profit_col(df, main_metric)
+    sales_col = _report_sales_col(df, main_metric)
+    rows = []
+    if profit_col and profit_col in df.columns:
+        p = pd.to_numeric(df[profit_col], errors="coerce").fillna(0)
+        total_profit = float(p.sum())
+        loss_sum = float(abs(p[p < 0].sum()))
+        loss_n = int((p < 0).sum())
+        rows.append({"层级": "整体样本", "亏损记录数": loss_n, "亏损额": money_fmt(loss_sum), "占整体利润比重": pct_fmt(loss_sum / abs(total_profit)) if total_profit else "-", "说明": "用于判断亏损对整体盈利质量的冲击"})
+
+        for dim in _report_dimension_candidates(df, dimensions)[:4]:
+            tmp = df.copy()
+            tmp["_profit"] = p
+            g = tmp.groupby(dim, dropna=False)["_profit"].apply(lambda s: abs(s[s < 0].sum())).reset_index()
+            if len(g):
+                top = g.sort_values("_profit", ascending=False).head(1)
+                if float(top.iloc[0]["_profit"]) > 0:
+                    rows.append({"层级": f"按{dim}", "亏损记录数": "-", "亏损额": money_fmt(top.iloc[0]["_profit"]), "占整体利润比重": pct_fmt(float(top.iloc[0]["_profit"]) / abs(total_profit)) if total_profit else "-", "说明": f"亏损集中项：{top.iloc[0][dim]}"})
+
+    elif anomaly_df is not None and len(anomaly_df) and "是否经营异常" in anomaly_df.columns:
+        abnormal = anomaly_df[anomaly_df["是否经营异常"]]
+        rows.append({"层级": "风险单元", "亏损记录数": "-", "亏损额": "-", "占整体利润比重": "-", "说明": f"当前缺少利润字段，暂以异常单元数量衡量风险：{len(abnormal)}个"})
+
+    return pd.DataFrame(rows)
+
+
+def _build_root_cause_table(df, main_metric, dimensions, anomaly_df):
+    profit_col = _report_profit_col(df, main_metric)
+    discount_col = _report_discount_col(df)
+    cost_col = _report_cost_col(df)
+    sales_col = _report_sales_col(df, main_metric)
+    product_dim = _report_find_column(df, ["产品类别", "产品品类", "类别", "子类别", "产品名称", "商品", "sku"])
+    customer_dim = _report_find_column(df, ["客户细分", "客户类型", "客户名称", "客户"])
+    ship_dim = _report_find_column(df, ["邮寄方式", "配送方式", "物流方式", "运输方式"])
+
+    rows = []
+    if discount_col:
+        rows.append({"可能根因": "折扣政策或审批异常", "识别线索": f"数据中存在“{discount_col}”字段，可按客户、产品、邮寄方式分层观察高折扣集中位置。", "复核数据": "折扣审批记录、促销活动方案、客户合同价格", "管理动作": "设置折扣分级预警，超过内部P90或审批线的订单进入复核"})
+    if profit_col and product_dim:
+        rows.append({"可能根因": "产品本身毛利偏低", "识别线索": f"结合“{product_dim}”与“{profit_col}”判断亏损是否集中在特定品类或产品。", "复核数据": "产品标准成本、售价策略、采购成本、退换货记录", "管理动作": "对连续亏损品类重估定价、成本与促销策略"})
+    if cost_col or ship_dim:
+        rows.append({"可能根因": "履约或物流成本偏高", "识别线索": f"结合“{ship_dim or '配送维度'}”与“{cost_col or '成本/费用字段'}”判断亏损是否来自履约压力。", "复核数据": "物流单号、运费分摊规则、履约时效、仓配费用", "管理动作": "复核高成本配送方式，优化包邮门槛和履约规则"})
+    if customer_dim:
+        rows.append({"可能根因": "客户结构或合同条款差异", "识别线索": f"结合“{customer_dim}”判断亏损是否集中在企业客户、消费者或特定大客户。", "复核数据": "客户合同、账期政策、返利政策、历史合作记录", "管理动作": "区分战略客户投入与常态化亏损，建立客户盈利分层"})
+    rows.append({"可能根因": "数据录入或口径异常", "识别线索": "当销售额、利润、折扣、成本等多个字段同时处于极端区间时，需排除录入或口径问题。", "复核数据": "原始订单、导入日志、字段映射规则、系统修改记录", "管理动作": "建立异常单据回溯机制，对重复导入、字段错位和异常值设置校验规则"})
+    if discount_col and profit_col:
+        rows.append({"可能根因": "短期促销与常态化定价失控混淆", "识别线索": f"如果高{discount_col}与负{profit_col}长期重复出现，说明可能不只是短期活动。", "复核数据": "促销日历、活动预算、折扣审批、活动后利润复盘", "管理动作": "区分活动期与非活动期，建立促销后复评机制"})
+    return pd.DataFrame(rows)
+
+
+def _build_tracking_loop_table():
+    return pd.DataFrame([
+        {"闭环环节": "1. 异常分派", "执行内容": "将高风险单元按客户、产品、地区、渠道分派给对应负责人", "输出物": "异常核查清单与责任人", "频率": "每周/每月"},
+        {"闭环环节": "2. 原因复核", "执行内容": "核对原始订单、折扣审批、成本核算、物流单据和客户合同", "输出物": "异常原因分类", "频率": "异常发生后3个工作日内"},
+        {"闭环环节": "3. 整改动作", "执行内容": "针对高折扣、负利润、高成本或数据口径问题制定整改措施", "输出物": "整改清单与完成期限", "频率": "按批次跟进"},
+        {"闭环环节": "4. 预警落地", "执行内容": "将折扣阈值、亏损占比、异常数量环比等规则写入看板或审批流程", "输出物": "预警规则与触发条件", "频率": "持续监控"},
+        {"闭环环节": "5. 定期复评", "执行内容": "复盘高风险数量、亏损金额、整改完成率和复发率", "输出物": "月度复评结论", "频率": "每月"}
+    ])
+
+
+def make_mpl_loss_by_dimension_figure(df, dim, profit_col, topn=10):
+    _setup_mpl_style()
+    has_cn = _mpl_has_chinese_font()
+    tmp = df.copy()
+    tmp["_profit"] = pd.to_numeric(tmp[profit_col], errors="coerce").fillna(0)
+    g = tmp.groupby(dim, dropna=False)["_profit"].apply(lambda s: abs(s[s < 0].sum())).reset_index()
+    g = g[g["_profit"] > 0].sort_values("_profit", ascending=True).tail(topn)
+    fig, ax = plt.subplots(figsize=(8.8, max(4.2, 0.42 * len(g) + 1.2)))
+    if len(g):
+        raw_labels = g[dim].astype(str).tolist()
+        if has_cn:
+            y_labels = [_short_label(x, 12) for x in raw_labels]
+        else:
+            y_labels = [f"L{i+1}" for i in range(len(raw_labels))]
+            fig._zc_mapping = [{"图中编码": code, "对应维度项": raw} for code, raw in zip(y_labels, raw_labels)]
+        vals = g["_profit"].astype(float).tolist()
+        bars = ax.barh(y_labels, vals, height=0.62)
+        max_val = max([abs(v) for v in vals] + [1])
+        for bar, val in zip(bars, vals):
+            ax.text(val + max_val * 0.015, bar.get_y() + bar.get_height()/2, _mpl_value_label(val), va="center", fontsize=9)
+    ax.xaxis.set_major_formatter(FuncFormatter(_mpl_money_axis))
+    ax.set_title(f"按{dim}汇总亏损额" if has_cn else "Loss by Dimension", fontsize=14, fontweight="bold", loc="left")
+    ax.set_xlabel("亏损额" if has_cn else "Loss")
+    ax.set_ylabel(dim if has_cn else "Category Code")
+    ax.grid(axis="x", alpha=0.22)
+    ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+    fig.tight_layout()
+    return fig
+
+
+def make_mpl_cross_dimension_heatmap_figure(df, dim1, dim2, metric):
+    _setup_mpl_style()
+    has_cn = _mpl_has_chinese_font()
+    method = aggregation_method_for_metric(metric) if "aggregation_method_for_metric" in globals() else "sum"
+    agg_func = "mean" if method == "mean" else "sum"
+    pivot = df.pivot_table(index=dim1, columns=dim2, values=metric, aggfunc=agg_func, fill_value=0)
+    # 控制维度数量，避免报告图过密
+    if pivot.shape[0] > 10:
+        top_rows = pivot.abs().sum(axis=1).sort_values(ascending=False).head(10).index
+        pivot = pivot.loc[top_rows]
+    if pivot.shape[1] > 10:
+        top_cols = pivot.abs().sum(axis=0).sort_values(ascending=False).head(10).index
+        pivot = pivot[top_cols]
+    fig, ax = plt.subplots(figsize=(8.8, max(4.6, 0.36 * pivot.shape[0] + 2)))
+    arr = pivot.values.astype(float) if pivot.size else np.zeros((1,1))
+    im = ax.imshow(arr, aspect="auto")
+    if has_cn:
+        x_labels = [_short_label(x, 8) for x in pivot.columns.astype(str).tolist()]
+        y_labels = [_short_label(x, 10) for x in pivot.index.astype(str).tolist()]
+    else:
+        x_labels = [f"C{i+1}" for i in range(pivot.shape[1])]
+        y_labels = [f"R{i+1}" for i in range(pivot.shape[0])]
+        fig._zc_mapping = (
+            [{"图中编码": code, "列维度项": raw} for code, raw in zip(x_labels, pivot.columns.astype(str).tolist())] +
+            [{"图中编码": code, "行维度项": raw} for code, raw in zip(y_labels, pivot.index.astype(str).tolist())]
+        )
+    ax.set_xticks(range(len(x_labels))); ax.set_xticklabels(x_labels, rotation=35, ha="right", fontsize=8)
+    ax.set_yticks(range(len(y_labels))); ax.set_yticklabels(y_labels, fontsize=8)
+    ax.set_title(f"{dim1} × {dim2}的{metric}交叉分布" if has_cn else "Cross Dimension Heatmap", fontsize=14, fontweight="bold", loc="left")
+    fig.colorbar(im, ax=ax, fraction=0.025, pad=0.02, format=FuncFormatter(_mpl_money_axis))
+    fig.tight_layout()
+    return fig
+
+
+def make_mpl_risk_trend_figure(anomaly_df):
+    _setup_mpl_style()
+    has_cn = _mpl_has_chinese_font()
+    plot = pd.DataFrame()
+    if anomaly_df is not None and len(anomaly_df) and "_period" in anomaly_df.columns and "是否经营异常" in anomaly_df.columns:
+        tmp = anomaly_df.copy()
+        tmp["_is_abnormal"] = tmp["是否经营异常"].astype(int)
+        if "风险等级" in tmp.columns:
+            tmp["_is_high"] = (tmp["风险等级"].astype(str) == "高风险").astype(int)
+        else:
+            tmp["_is_high"] = 0
+        plot = tmp.groupby("_period", dropna=False).agg(异常单元数=("_is_abnormal", "sum"), 高风险单元数=("_is_high", "sum")).reset_index()
+    fig, ax = plt.subplots(figsize=(8.8, 4.2))
+    if len(plot):
+        xs = list(range(len(plot)))
+        ax.plot(xs, plot["异常单元数"].astype(float).tolist(), marker="o", linewidth=2.4, label=("异常单元数" if has_cn else "Abnormal"))
+        ax.plot(xs, plot["高风险单元数"].astype(float).tolist(), marker="o", linewidth=2.4, label=("高风险单元数" if has_cn else "High Risk"))
+        periods = plot["_period"].astype(str).tolist()
+        tick_idx = list(range(len(periods)))
+        if len(periods) > 8:
+            step = max(1, int(np.ceil(len(periods) / 8)))
+            tick_idx = list(range(0, len(periods), step))
+            if len(periods)-1 not in tick_idx:
+                tick_idx.append(len(periods)-1)
+        ax.set_xticks(tick_idx)
+        ax.set_xticklabels([periods[i] for i in tick_idx], fontsize=9)
+        ax.legend(fontsize=9)
+    ax.set_title("异常数量趋势" if has_cn else "Risk Count Trend", fontsize=14, fontweight="bold", loc="left")
+    ax.set_xlabel("期间" if has_cn else "Period")
+    ax.set_ylabel("数量" if has_cn else "Count")
+    ax.grid(axis="y", alpha=0.22)
+    ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+    fig.tight_layout()
+    return fig
+
+
+def _add_multidim_section(doc, df, main_metric, dimensions):
+    report_dims = _report_dimension_candidates(df, dimensions)
+    if not report_dims:
+        add_para(doc, "当前数据中可用于经营分层的维度字段较少，建议补充客户细分、地区、产品品类、渠道或邮寄方式等字段，以提升多维交叉分析能力。", indent=True)
+        return
+
+    add_heading(doc, "3.2 多维结构贡献", 2)
+    add_para(doc, f"多维结构分析不只观察单一维度，而是同时覆盖客户、地区、产品、渠道等核心经营视角，用于回答“{main_metric}主要由哪些业务维度贡献、风险或亏损集中在哪里”。", indent=True)
+
+    dim_table = _build_multidim_report_table(df, main_metric, report_dims)
+    if len(dim_table):
+        add_dataframe_to_docx(doc, dim_table, max_rows=8)
+
+    # 插入多个真实图表，避免简报只有文字占位
+    for idx, dim in enumerate(report_dims[:3], start=2):
+        add_mpl_figure_to_docx(doc, make_mpl_dimension_bar_figure(df, dim, main_metric), f"图{idx} 按{dim}汇总{main_metric}")
+        _add_dimension_interpretation(doc, df, [dim], main_metric)
+
+    if len(report_dims) >= 2:
+        add_heading(doc, "3.3 交叉对比分析", 2)
+        add_para(doc, f"交叉对比用于观察两个经营维度组合下的{main_metric}分布，帮助识别“某类客户 × 某类产品”“某地区 × 某品类”等组合是否贡献集中或风险突出。", indent=True)
+        add_mpl_figure_to_docx(doc, make_mpl_cross_dimension_heatmap_figure(df, report_dims[0], report_dims[1], main_metric), f"图5 {report_dims[0]}×{report_dims[1]}交叉分布")
+    else:
+        add_heading(doc, "3.3 交叉对比分析", 2)
+        add_para(doc, "当前可用于交叉分析的维度不足两个，暂不生成交叉分布图。建议补充客户细分、地区、产品品类或渠道字段。", indent=True)
+
+    profit_col = _report_profit_col(df, main_metric)
+    if profit_col and profit_col in df.columns:
+        loss_dim = report_dims[0]
+        add_heading(doc, "3.4 亏损分层分析", 2)
+        add_para(doc, f"亏损分层用于判断负利润是否集中在特定客户、地区、产品或渠道。下图按照“{loss_dim}”汇总亏损额，帮助管理者识别优先核查方向。", indent=True)
+        add_mpl_figure_to_docx(doc, make_mpl_loss_by_dimension_figure(df, loss_dim, profit_col), f"图6 按{loss_dim}汇总亏损额")
+        impact = _build_loss_impact_table(df, main_metric, report_dims, None)
+        if len(impact):
+            add_dataframe_to_docx(doc, impact, max_rows=8)
+
+
+def _add_threshold_and_impact_section(doc, df, main_metric, dimensions, anomaly_df, date_col):
+    add_heading(doc, "4.2 量化对标与风险影响", 2)
+    add_para(doc, "为避免风险判断停留在“高/中/低”的描述层面，系统基于上传数据自动生成内部参考阈值，并计算异常单元对整体经营结果的影响。企业可在此基础上替换为自身制度阈值或行业基准。", indent=True)
+    threshold_df = _build_threshold_table(df, main_metric, anomaly_df, date_col)
+    if len(threshold_df):
+        add_dataframe_to_docx(doc, threshold_df, max_rows=8)
+
+    impact_df = _build_loss_impact_table(df, main_metric, dimensions, anomaly_df)
+    if len(impact_df):
+        add_para(doc, "下表进一步量化亏损或高风险对象对整体经营结果的冲击，用于判断问题属于局部异常还是已经影响整体经营质量。", indent=True)
+        add_dataframe_to_docx(doc, impact_df, max_rows=8)
+
+    if date_col and anomaly_df is not None and len(anomaly_df) and "_period" in anomaly_df.columns:
+        add_mpl_figure_to_docx(doc, make_mpl_risk_trend_figure(anomaly_df), "图7 异常数量趋势")
+        add_para(doc, "图表解读：异常数量趋势用于判断风险是逐期恶化、短期波动还是趋于平稳。若异常数量或高风险数量连续上升，应触发专项复核。", indent=True)
+
+
+def _add_root_cause_section(doc, df, main_metric, dimensions, anomaly_df):
+    add_heading(doc, "4.3 细分根因归因", 2)
+    add_para(doc, "根因分析不直接将异常归结为单一原因，而是从折扣政策、产品毛利、履约成本、客户结构、数据口径和促销活动等方面进行分层排查，避免建议过于笼统。", indent=True)
+    root_df = _build_root_cause_table(df, main_metric, dimensions, anomaly_df)
+    add_dataframe_to_docx(doc, root_df, max_rows=10)
+
+
+def _add_tracking_loop_section(doc):
+    add_heading(doc, "5.3 跟踪闭环与预警机制", 2)
+    add_para(doc, "为避免分析停留在发现问题阶段，建议将本报告输出结果转化为异常核查、整改跟踪和预警规则三类管理动作，形成可持续的经营管控闭环。", indent=True)
+    add_dataframe_to_docx(doc, _build_tracking_loop_table(), max_rows=10)
+
+
 def generate_ai_report_docx(ai_text, df, main_metric, dimensions, date_col, anomaly_df, focus_list):
     if not DOCX_AVAILABLE:
         raise RuntimeError("未安装 python-docx，请先安装：python -m pip install python-docx")
@@ -2204,7 +2615,7 @@ def generate_ai_report_docx(ai_text, df, main_metric, dimensions, date_col, anom
     if focus_list:
         add_para(doc, f"本次简报关注重点包括：{'、'.join(focus_list)}。", indent=True)
     if not date_col:
-        add_para(doc, "由于当前未选择有效日期字段，系统不生成时间趋势结论，改用结构分布和多维对比方式观察经营表现。", indent=True)
+        add_para(doc, "由于当前未选择有效日期字段，系统不生成时间趋势结论，改用结构分布、多维对比、交叉分析和异常核查方式观察经营表现。", indent=True)
 
     add_heading(doc, "2.2 核心指标概览", 2)
     profile = _report_metric_profile(df, main_metric)
@@ -2233,24 +2644,24 @@ def generate_ai_report_docx(ai_text, df, main_metric, dimensions, date_col, anom
         add_mpl_figure_to_docx(doc, make_mpl_distribution_figure(df, main_metric), f"图1 {main_metric}分布情况")
         _add_distribution_interpretation(doc, df, main_metric)
 
-    if dimensions:
-        add_heading(doc, "3.2 多维结构贡献", 2)
-        add_mpl_figure_to_docx(doc, make_mpl_dimension_bar_figure(df, dimensions[0], main_metric), f"图2 按{dimensions[0]}汇总{main_metric}")
-        _add_dimension_interpretation(doc, df, dimensions, main_metric)
+    _add_multidim_section(doc, df, main_metric, dimensions)
 
     add_heading(doc, "四、重点风险与异常核查", 1)
     if anomaly_df is not None and len(anomaly_df) and '是否经营异常' in anomaly_df.columns:
         add_para(doc, f"系统当前识别出{risk['abnormal_n']}个异常经营单元，其中高风险单元{risk['high_n']}个。风险结果用于提示优先核查对象，并需结合企业真实业务背景进行复核。", indent=True)
-        add_mpl_figure_to_docx(doc, make_mpl_risk_figure(anomaly_df), "图3 风险等级分布")
+        add_mpl_figure_to_docx(doc, make_mpl_risk_figure(anomaly_df), "图8 风险等级分布")
         _add_risk_interpretation(doc, anomaly_df, main_metric)
         _add_risk_review_section(doc, anomaly_df, main_metric, dimensions, section_title="4.1 重点异常核查清单")
+        _add_threshold_and_impact_section(doc, df, main_metric, dimensions, anomaly_df, date_col)
+        _add_root_cause_section(doc, df, main_metric, dimensions, anomaly_df)
     else:
         add_para(doc, "当前数据暂未形成稳定的异常诊断结果。", indent=True)
+        _add_threshold_and_impact_section(doc, df, main_metric, dimensions, anomaly_df, date_col)
+        _add_root_cause_section(doc, df, main_metric, dimensions, anomaly_df)
 
     add_heading(doc, "五、AI增强解读与管理建议", 1)
     add_heading(doc, "5.1 AI综合判断", 2)
     useful = [p for p in ai_paras if not is_report_meta_line(p)]
-    # 只保留管理判断类内容，避免AI再次生成报告标题、数据周期和重复大纲
     useful = [p for p in useful if len(clean_report_sentence(p)) >= 12][:4]
     if useful:
         for p in useful:
@@ -2270,6 +2681,7 @@ def generate_ai_report_docx(ai_text, df, main_metric, dimensions, date_col, anom
         action_df = _build_management_action_table(main_metric, dimensions, anomaly_df)
         add_dataframe_to_docx(doc, action_df, max_rows=10)
 
+    _add_tracking_loop_section(doc)
     add_para(doc, "以上建议用于辅助管理层确定核查优先级。实际决策仍需结合企业业务背景、政策制度、预算目标和原始业务单据进行综合判断。", indent=True)
 
     bio = BytesIO()
@@ -3111,7 +3523,7 @@ def generate_report_docx(df, main_metric, dimensions, date_col, anomaly_df, focu
     if focus_list:
         add_para(doc, f"本次简报关注重点包括：{'、'.join(focus_list)}。", indent=True)
     if not date_col:
-        add_para(doc, "当前未选择有效日期字段，因此不生成时间趋势结论，系统转为结构分布、多维对比和异常核查分析。", indent=True)
+        add_para(doc, "当前未选择有效日期字段，因此不生成时间趋势结论，系统转为结构分布、多维对比、交叉分析和异常核查分析。", indent=True)
 
     add_heading(doc, "2.2 核心指标概览", 2)
     profile = _report_metric_profile(df, main_metric)
@@ -3140,34 +3552,32 @@ def generate_report_docx(df, main_metric, dimensions, date_col, anomaly_df, focu
         add_mpl_figure_to_docx(doc, make_mpl_distribution_figure(df, main_metric), f"图1 {main_metric}分布情况")
         _add_distribution_interpretation(doc, df, main_metric)
 
-    if dimensions:
-        add_heading(doc, "3.2 多维结构贡献", 2)
-        add_para(doc, f"多维结构分析用于回答“{main_metric}主要由哪些业务维度贡献”。系统优先选择“{dimensions[0]}”进行代表性展示，并可在系统页面继续下钻其他维度。", indent=True)
-        add_mpl_figure_to_docx(doc, make_mpl_dimension_bar_figure(df, dimensions[0], main_metric), f"图2 按{dimensions[0]}汇总{main_metric}")
-        _add_dimension_interpretation(doc, df, dimensions, main_metric)
-    else:
-        add_para(doc, "当前数据中可用于分组下钻的维度字段较少，建议补充地区、部门、客户类型、产品类别等字段，以提升结构分析效果。", indent=True)
+    _add_multidim_section(doc, df, main_metric, dimensions)
 
     add_heading(doc, "四、重点风险与异常核查", 1)
     if anomaly_df is not None and len(anomaly_df) and '是否经营异常' in anomaly_df.columns:
         risk = _risk_profile(anomaly_df)
         add_para(doc, f"系统基于主指标偏离、多指标组合偏离、业务规则风险和模型异常贡献识别异常经营单元。当前共识别出{risk['abnormal_n']}个异常经营单元，其中高风险单元{risk['high_n']}个。该结果用于确定核查优先级，而不是直接给出最终业务定性。", indent=True)
-        add_mpl_figure_to_docx(doc, make_mpl_risk_figure(anomaly_df), "图3 风险等级分布")
+        add_mpl_figure_to_docx(doc, make_mpl_risk_figure(anomaly_df), "图8 风险等级分布")
         _add_risk_interpretation(doc, anomaly_df, main_metric)
         _add_risk_review_section(doc, anomaly_df, main_metric, dimensions, section_title="4.1 重点异常核查清单")
+        _add_threshold_and_impact_section(doc, df, main_metric, dimensions, anomaly_df, date_col)
+        _add_root_cause_section(doc, df, main_metric, dimensions, anomaly_df)
     else:
         add_para(doc, "当前数据不足以进行稳定的异常诊断，建议补充更多数值指标和业务维度后再进行风险识别。", indent=True)
+        _add_threshold_and_impact_section(doc, df, main_metric, dimensions, anomaly_df, date_col)
+        _add_root_cause_section(doc, df, main_metric, dimensions, anomaly_df)
 
     add_heading(doc, "五、管理建议与下一步行动", 1)
     action_df = _build_management_action_table(main_metric, dimensions, anomaly_df)
     add_dataframe_to_docx(doc, action_df, max_rows=10)
+    _add_tracking_loop_section(doc)
     add_para(doc, "以上建议用于辅助管理层确定核查优先级。实际决策仍需结合企业业务背景、政策制度、预算目标和原始业务单据进行综合判断。", indent=True)
 
     bio = BytesIO()
     doc.save(bio)
     bio.seek(0)
     return bio
-
 
 # ============================================================
 # 页面入口、功能导航与数据初始化
@@ -4642,8 +5052,8 @@ with tab6:
             try:
                 abnormal_count = int(anomaly_df["是否经营异常"].sum()) if len(anomaly_df) else 0
                 top_anom = anomaly_df.sort_values("风险得分", ascending=False).head(5).to_dict(orient="records") if len(anomaly_df) else []
-                sys_p = "你是企业经营分析顾问。请站在管理层阅读者角度，基于系统统计结果生成补充解读和可执行管理建议。不得引用数据中不存在的字段，不要输出报告标题，不要重新生成一、二、三、四、五大纲。"
-                user_p = f"主指标：{main_metric}\n关注重点：{'、'.join(focus)}\n数据记录数：{len(df)}\n主指标合计：{df[main_metric].sum()}\n主指标均值：{df[main_metric].mean()}\n维度字段：{selected_dimensions}\n异常经营单元数：{abnormal_count}\nTop异常：{top_anom}\n\n请输出两部分：1）AI综合判断：用2-4段话说明当前数据反映的主要经营问题和管理含义；2）管理行动清单：用Markdown表格输出“管理关注点、需要解决的问题、建议动作、优先级”。重点说明为什么这些异常值得关注、应该查哪些原始数据、如何形成下一步管理动作。"
+                sys_p = "你是企业经营分析顾问。请站在管理层阅读者角度，基于系统统计结果生成补充解读和可执行管理建议。不得引用数据中不存在的字段，不要输出报告标题，不要重新生成一、二、三、四、五大纲。重点从多维交叉、量化阈值、亏损冲击、细分根因和跟踪闭环角度补充判断。"
+                user_p = f"主指标：{main_metric}\n关注重点：{'、'.join(focus)}\n数据记录数：{len(df)}\n主指标合计：{df[main_metric].sum()}\n主指标均值：{df[main_metric].mean()}\n维度字段：{selected_dimensions}\n异常经营单元数：{abnormal_count}\nTop异常：{top_anom}\n\n请输出两部分：1）AI综合判断：用2-4段话说明当前数据反映的主要经营问题和管理含义，需关注多维结构、亏损/风险影响、阈值预警和细分根因；2）管理行动清单：用Markdown表格输出“管理关注点、需要解决的问题、建议动作、优先级”。重点说明为什么这些异常值得关注、应该查哪些原始数据、如何形成整改跟踪和预警复评闭环。"
                 ans, elapsed = call_llm(provider, sys_p, user_p, temperature=0.25)
                 st.success(f"生成完成，耗时 {elapsed:.2f} 秒")
                 render_ai_answer_pretty(ans)
