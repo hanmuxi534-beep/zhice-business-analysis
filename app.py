@@ -353,6 +353,127 @@ div[data-testid="stMarkdownContainer"] li {
     margin: 10px 0 8px 0;
 }
 
+
+.asset-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(140px, 1fr));
+    gap: 16px;
+    margin: 14px 0 20px 0;
+}
+.asset-card {
+    background: linear-gradient(180deg, #FFFFFF 0%, #F9FCFF 100%);
+    border: 1px solid #E3EBF6;
+    border-radius: 22px;
+    padding: 18px 20px;
+    box-shadow: 0 10px 24px rgba(30,55,90,.065);
+    position: relative;
+    overflow: hidden;
+    min-height: 122px;
+}
+.asset-card:before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 5px;
+    height: 100%;
+    background: linear-gradient(180deg, #1E77D3, #7BC8FF);
+}
+.asset-label {
+    color: #66758C;
+    font-size: 15px;
+    font-weight: 900;
+    margin-bottom: 8px;
+}
+.asset-value {
+    color: #071F43;
+    font-size: 31px;
+    font-weight: 950;
+    line-height: 1.15;
+}
+.asset-note {
+    color: #7B8BA2;
+    font-size: 14px;
+    margin-top: 9px;
+    line-height: 1.55;
+}
+.governance-hero {
+    background:
+      linear-gradient(135deg, rgba(255,255,255,.96) 0%, rgba(245,250,255,.98) 100%);
+    border: 1px solid #DDEBFA;
+    border-radius: 26px;
+    padding: 24px 28px;
+    box-shadow: 0 14px 34px rgba(24,48,88,.08);
+    margin-bottom: 18px;
+}
+.governance-hero-title {
+    font-size: 24px;
+    font-weight: 950;
+    color: #10213F;
+    margin-bottom: 8px;
+}
+.governance-hero-text {
+    font-size: 17px;
+    color: #40516A;
+    line-height: 1.85;
+}
+.governance-step {
+    display: inline-block;
+    margin: 6px 8px 6px 0;
+    padding: 8px 13px;
+    border-radius: 999px;
+    background: #EEF6FF;
+    color: #13528A;
+    border: 1px solid #D7E9FF;
+    font-size: 14px;
+    font-weight: 900;
+}
+.action-list-card {
+    background: #FFFFFF;
+    border: 1px solid #E5EBF3;
+    border-radius: 22px;
+    padding: 20px 22px;
+    box-shadow: 0 10px 24px rgba(30,55,90,.06);
+    min-height: 300px;
+}
+.action-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 14px;
+    border-bottom: 1px solid #EDF2F8;
+    padding: 12px 0;
+}
+.action-item:last-child { border-bottom: none; }
+.action-title {
+    font-weight: 900;
+    color: #10213F;
+    font-size: 16px;
+}
+.action-desc {
+    color: #65768E;
+    font-size: 14px;
+    line-height: 1.6;
+    margin-top: 4px;
+}
+.action-badge {
+    white-space: nowrap;
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-size: 13px;
+    font-weight: 900;
+    background: #EAF5FF;
+    color: #1E77D3;
+}
+.action-badge.warn {
+    background: #FFF2D8;
+    color: #A76700;
+}
+.action-badge.ok {
+    background: #EAF8F0;
+    color: #16834A;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -3215,23 +3336,159 @@ def gauge_chart(score):
     return level, desc
 
 
+
+def governance_asset_overview_cards(health_score, clean_summary, meta, metric_candidates, dimension_candidates, date_candidates, numeric_report, quality_report):
+    rows = int(clean_summary.get("清洗后行数", 0))
+    cols = int(clean_summary.get("清洗后字段数", 0))
+
+    valid_metric = len(metric_candidates)
+    valid_dim = len(dimension_candidates)
+    valid_date = len(date_candidates)
+
+    issue_total = int(clean_summary.get("重复行数", 0)) + int(clean_summary.get("缺失单元格数", 0))
+    if numeric_report is not None and len(numeric_report) and "缺失/无法解析数" in numeric_report.columns:
+        issue_total += int(pd.to_numeric(numeric_report["缺失/无法解析数"], errors="coerce").fillna(0).sum())
+
+    level, desc = health_level(health_score)
+    html = f"""
+    <div class="asset-grid">
+        <div class="asset-card">
+            <div class="asset-label">数据健康度</div>
+            <div class="asset-value">{health_score}<span style="font-size:18px;"> 分</span></div>
+            <div class="asset-note">{level}｜{desc}</div>
+        </div>
+        <div class="asset-card">
+            <div class="asset-label">可分析记录</div>
+            <div class="asset-value">{rows:,}</div>
+            <div class="asset-note">清洗后进入分析的数据行数</div>
+        </div>
+        <div class="asset-card">
+            <div class="asset-label">字段资产</div>
+            <div class="asset-value">{cols}</div>
+            <div class="asset-note">已识别字段总数</div>
+        </div>
+        <div class="asset-card">
+            <div class="asset-label">分析路径</div>
+            <div class="asset-value">{valid_metric}/{valid_dim}/{valid_date}</div>
+            <div class="asset-note">主指标 / 维度 / 日期字段</div>
+        </div>
+        <div class="asset-card">
+            <div class="asset-label">质量关注点</div>
+            <div class="asset-value">{issue_total:,}</div>
+            <div class="asset-note">缺失、重复或解析问题记录</div>
+        </div>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def governance_flow_summary(health_score, main_metric, metric_candidates, dimension_candidates, date_candidates, clean_summary):
+    level, desc = health_level(health_score)
+    metric_text = "、".join(metric_candidates[:4]) if metric_candidates else "暂无明确主指标"
+    dim_text = "、".join(dimension_candidates[:4]) if dimension_candidates else "暂无明确维度字段"
+    date_text = "、".join(date_candidates[:2]) if date_candidates else "未识别到有效日期字段"
+    rows = clean_summary.get("清洗后行数", 0)
+    cols = clean_summary.get("清洗后字段数", 0)
+    st.markdown(f"""
+    <div class="governance-hero">
+        <div class="governance-hero-title">数据资产总览</div>
+        <div class="governance-hero-text">
+            系统已将上传文件转换为可分析数据资产：当前共有 <b>{rows:,}</b> 条可分析记录、<b>{cols}</b> 个字段，
+            数据健康状态为 <b>{level}</b>。推荐以 <b>{main_metric}</b> 作为当前主分析指标。
+        </div>
+        <div style="margin-top:12px;">
+            <span class="governance-step">主指标：{metric_text}</span>
+            <span class="governance-step">分析维度：{dim_text}</span>
+            <span class="governance-step">时间字段：{date_text}</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def governance_action_center(clean_summary, numeric_report, quality_report, metric_candidates, dimension_candidates, date_candidates):
+    actions = []
+
+    missing = int(clean_summary.get("缺失单元格数", 0))
+    duplicate = int(clean_summary.get("重复行数", 0))
+
+    numeric_bad = 0
+    if numeric_report is not None and len(numeric_report) and "缺失/无法解析数" in numeric_report.columns:
+        numeric_bad = int(pd.to_numeric(numeric_report["缺失/无法解析数"], errors="coerce").fillna(0).sum())
+
+    if missing > 0:
+        actions.append(("缺失值治理", f"识别到 {missing:,} 个缺失单元格，建议结合业务口径选择忽略、填充或人工复核。", "需关注"))
+    else:
+        actions.append(("缺失值治理", "当前未发现明显缺失单元格，字段完整性较好。", "正常"))
+
+    if duplicate > 0:
+        actions.append(("重复记录治理", f"识别到 {duplicate:,} 行重复记录，建议核查是否为重复导入或真实重复业务。", "需关注"))
+    else:
+        actions.append(("重复记录治理", "当前未发现重复行，记录唯一性较好。", "正常"))
+
+    if numeric_bad > 0:
+        actions.append(("数值格式治理", f"存在 {numeric_bad:,} 个数值缺失或无法解析单元，可能影响图表、问数和风险识别。", "需关注"))
+    else:
+        actions.append(("数值格式治理", "数值字段可解析性较好，适合开展指标分析。", "正常"))
+
+    if not date_candidates:
+        actions.append(("时间分析能力", "暂未识别到有效日期字段，系统将优先开展结构、分布和多维对比分析。", "提示"))
+    else:
+        actions.append(("时间分析能力", f"识别到 {len(date_candidates)} 个日期字段，可支持趋势、环比和阶段变化分析。", "正常"))
+
+    if not metric_candidates or not dimension_candidates:
+        actions.append(("分析路径完整性", "主指标或维度字段不足，建议补充金额、数量、客户、地区、类别等字段。", "需关注"))
+    else:
+        actions.append(("分析路径完整性", "主指标与维度字段较完整，可支持经营态势、多维洞察和风险识别。", "正常"))
+
+    html = '<div class="action-list-card"><h3 style="margin-top:0;">质量体检与处理建议</h3>'
+    for title, desc, status in actions:
+        cls = "warn" if status == "需关注" else ("ok" if status == "正常" else "")
+        html += f"""
+        <div class="action-item">
+            <div>
+                <div class="action-title">{title}</div>
+                <div class="action-desc">{desc}</div>
+            </div>
+            <div class="action-badge {cls}">{status}</div>
+        </div>
+        """
+    html += "</div>"
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def field_asset_table(meta, metric_candidates, dimension_candidates, date_candidates):
+    show_cols = ["字段名", "字段含义解释", "字段类型", "推荐角色", "推荐聚合方式", "是否适合作为主指标", "注意事项"]
+    cols = [c for c in show_cols if c in meta.columns]
+    if not cols:
+        return meta
+    out = meta[cols].copy()
+    role_order = {"度量指标": 0, "数值字段": 1, "维度字段": 2, "时间字段": 3, "标识字段": 4, "文本字段": 5}
+    out["_排序"] = out["推荐角色"].map(role_order).fillna(99) if "推荐角色" in out.columns else 99
+    return out.sort_values("_排序").drop(columns=["_排序"], errors="ignore")
+
+
+
+
 def role_distribution_chart(meta):
     role_count = meta["推荐角色"].value_counts().reset_index()
     role_count.columns = ["字段角色", "字段数量"]
     order = ["度量指标", "数值字段", "维度字段", "时间字段", "进度/时长字段", "标识字段", "文本字段"]
     role_count["排序"] = role_count["字段角色"].apply(lambda x: order.index(x) if x in order else 99)
     role_count = role_count.sort_values(["排序", "字段数量"], ascending=[True, False])
-    fig = go.Figure(go.Bar(
-        x=role_count["字段数量"],
-        y=role_count["字段角色"],
-        orientation="h",
-        text=role_count["字段数量"],
-        textposition="outside",
-        hovertemplate="%{y}<br>字段数量=%{x}<extra></extra>"
-    ))
-    fig.update_layout(title="字段角色分布", xaxis_title="字段数量", yaxis_title="字段角色")
-    st.plotly_chart(chart_layout(fig, 500), use_container_width=True)
 
+    fig = go.Figure(go.Pie(
+        labels=role_count["字段角色"],
+        values=role_count["字段数量"],
+        hole=0.56,
+        textinfo="label+percent",
+        hovertemplate="%{label}<br>字段数量=%{value}<br>占比=%{percent}<extra></extra>"
+    ))
+    fig.update_layout(
+        title="字段角色资产分布",
+        annotations=[dict(text=f"{int(role_count['字段数量'].sum())}<br>字段", x=0.5, y=0.5, showarrow=False, font=dict(size=22, color="#10213F"))],
+        showlegend=True
+    )
+    st.plotly_chart(chart_layout(fig, 500), use_container_width=True)
 
 def data_quality_issue_chart(clean_summary, quality_report, numeric_report):
     duplicate = int(clean_summary.get("重复行数", 0))
@@ -3241,27 +3498,31 @@ def data_quality_issue_chart(clean_summary, quality_report, numeric_report):
     if quality_report is not None and len(quality_report):
         q = quality_report[quality_report["处理环节"].astype(str).str.contains("日期字段解析", na=False)]
         if len(q):
-            date_fail = int(q["处理数量"].sum())
+            date_fail = int(pd.to_numeric(q["处理数量"], errors="coerce").fillna(0).sum())
 
     numeric_fail = 0
     if numeric_report is not None and len(numeric_report) and "缺失/无法解析数" in numeric_report.columns:
-        numeric_fail = int(numeric_report["缺失/无法解析数"].sum())
+        numeric_fail = int(pd.to_numeric(numeric_report["缺失/无法解析数"], errors="coerce").fillna(0).sum())
 
     issues = pd.DataFrame({
-        "问题类型": ["重复行", "缺失单元格", "日期解析失败", "数值缺失/无法解析"],
-        "数量": [duplicate, missing, date_fail, numeric_fail]
-    })
+        "问题类型": ["缺失值", "数值无法解析", "重复记录", "日期解析失败"],
+        "数量": [missing, numeric_fail, duplicate, date_fail]
+    }).sort_values("数量", ascending=True)
+
     fig = go.Figure(go.Bar(
         x=issues["数量"],
         y=issues["问题类型"],
         orientation="h",
-        text=issues["数量"],
+        text=issues["数量"].map(lambda x: f"{int(x):,}"),
         textposition="outside",
-        hovertemplate="%{y}<br>数量=%{x}<extra></extra>"
+        hovertemplate="%{y}<br>数量=%{x:,}<extra></extra>"
     ))
-    fig.update_layout(title="数据质量问题概览", xaxis_title="数量", yaxis_title="问题类型")
+    fig.update_layout(
+        title="数据质量问题分布",
+        xaxis_title="问题数量",
+        yaxis_title="问题类型"
+    )
     st.plotly_chart(chart_layout(fig, 500), use_container_width=True)
-
 
 def make_pills(items, css_class=""):
     if not items:
@@ -3307,7 +3568,7 @@ def field_recommendation_cards(meta, metric_candidates, dimension_candidates, da
         st.markdown(f"""
         <div class="field-card">
             <div class="field-card-title">⚠️ 谨慎使用</div>
-            <div class="field-card-desc">ID类字段不应直接分析；折扣、比例类字段通常不适合求和。</div>
+            <div class="field-card-desc">系统会区分规模型指标与水平型指标，自动推荐更适合的分析口径。</div>
             {make_pills(list(dict.fromkeys(id_fields + cautious_fields)), "warn")}
         </div>
         """, unsafe_allow_html=True)
@@ -3318,28 +3579,30 @@ def numeric_validity_progress(numeric_report):
         st.info("暂无数值转换检查结果。")
         return
 
-    st.markdown("#### 数值字段有效率")
-    st.markdown(
-        "用于判断金额、数量、利润等字段是否能被系统正确识别为数值。"
-        "有效率越高，后续图表、问数和风险识别结果越稳定。"
-    )
-
     rows = []
     for _, r in numeric_report.iterrows():
         field = r.get("字段", "")
         before = float(r.get("转换前非空数", 0))
         after = float(r.get("转换后有效数值数", 0))
         rate = after / before if before > 0 else 1
-        rows.append((field, max(0, min(rate, 1))))
-    rows = sorted(rows, key=lambda x: x[1], reverse=True)
+        rows.append({"字段": field, "有效率": max(0, min(rate, 1)), "有效率文本": f"{max(0, min(rate, 1)):.1%}"})
+    df_rate = pd.DataFrame(rows).sort_values("有效率", ascending=True).tail(12)
 
-    for field, rate in rows[:12]:
-        left, right = st.columns([5, 1])
-        with left:
-            st.markdown(f"**{field}**")
-        with right:
-            st.markdown(f"**{rate:.1%}**")
-        st.progress(float(rate))
+    fig = go.Figure(go.Bar(
+        x=df_rate["有效率"],
+        y=df_rate["字段"],
+        orientation="h",
+        text=df_rate["有效率文本"],
+        textposition="outside",
+        hovertemplate="%{y}<br>有效率=%{text}<extra></extra>"
+    ))
+    fig.update_xaxes(range=[0, 1.05], tickformat=".0%")
+    fig.update_layout(
+        title="数值字段可解析性",
+        xaxis_title="有效数值占比",
+        yaxis_title="数值字段"
+    )
+    st.plotly_chart(chart_layout(fig, 500), use_container_width=True)
 
 def chart_data_diagnostic(df, main_metric, numeric_cols, dimensions):
     rows = []
@@ -3360,32 +3623,7 @@ def chart_data_diagnostic(df, main_metric, numeric_cols, dimensions):
 
 
 def data_understanding_summary(score, main_metric, metric_candidates, dimension_candidates, date_candidates, clean_summary):
-    level, desc = health_level(score)
-    metric_text = "、".join(metric_candidates[:4]) if metric_candidates else "暂无明确主指标"
-    dim_text = "、".join(dimension_candidates[:4]) if dimension_candidates else "暂无明确维度字段"
-    date_text = "、".join(date_candidates[:2]) if date_candidates else "未识别到有效日期字段"
-    rows = clean_summary.get("清洗后行数", 0)
-    cols = clean_summary.get("清洗后字段数", 0)
-    st.markdown(f"""
-    <div class="health-summary">
-        <h3>🤖 AI数据理解摘要</h3>
-        <div class="health-line">系统识别到当前数据共有 <b>{rows:,}</b> 条记录、<b>{cols}</b> 个字段，数据健康状态为 <b>{level}</b>：{desc}</div>
-        <div class="health-line">推荐优先以 <b>{main_metric}</b> 作为当前主分析指标；可选主指标包括：{metric_text}。</div>
-        <div class="health-line">推荐用于分组分析的维度包括：{dim_text}。</div>
-        <div class="health-line">时间字段识别结果：{date_text}。如果没有有效日期字段，系统将自动转为结构分析模式。</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "🧩 数据治理",
-    "🏠 经营态势",
-    "📊 经营洞察",
-    "⚠️ 风险识别",
-    "💬 问数助手",
-    "📝 决策简报"
-])
-
+    governance_flow_summary(score, main_metric, metric_candidates, dimension_candidates, date_candidates, clean_summary)
 
 # ============================================================
 # Tab 1
@@ -3394,40 +3632,33 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 
 with tab1:
     st.subheader("🧩 数据治理")
-    st.markdown('<div class="tip-card">系统自动评估数据质量、识别字段角色并生成字段资产地图，帮助用户快速确认哪些字段适合作为主指标、分析维度和时间字段；详细字段表与处理日志默认折叠，便于按需追溯分析依据。</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="tip-card">系统自动完成数据质量评估、字段角色识别与分析口径推荐，将上传文件转换为可分析、可追溯、可配置的数据资产。</div>',
+        unsafe_allow_html=True
+    )
 
     health_score = compute_data_health_score(clean_summary, meta, numeric_report, metric_candidates, dimension_candidates, date_candidates)
 
-    top_left, top_right = st.columns([1.05, 1.55])
-    with top_left:
-        level, desc = gauge_chart(health_score)
-    with top_right:
-        data_understanding_summary(health_score, main_metric, metric_candidates, dimension_candidates, date_candidates, clean_summary)
-
-    st.markdown("### 数据资产概览")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        kpi_card("数据记录数", f"{clean_summary['清洗后行数']:,}", "清洗后的可分析记录")
-    with c2:
-        kpi_card("字段数量", f"{clean_summary['清洗后字段数']}", "当前数据字段数")
-    with c3:
-        kpi_card("可选主指标", f"{len(metric_candidates)}", "系统推荐的数值指标")
-    with c4:
-        kpi_card("可选维度", f"{len(dimension_candidates)}", "可用于分组分析的字段")
+    # 1. 数据资产总览：先给管理者一个整体判断
+    data_understanding_summary(health_score, main_metric, metric_candidates, dimension_candidates, date_candidates, clean_summary)
+    governance_asset_overview_cards(health_score, clean_summary, meta, metric_candidates, dimension_candidates, date_candidates, numeric_report, quality_report)
 
     st.markdown("### 字段资产地图")
-    c1, c2 = st.columns([1.05, 1.45])
+    c1, c2 = st.columns([1.0, 1.35])
     with c1:
         role_distribution_chart(meta)
     with c2:
         field_recommendation_cards(meta, metric_candidates, dimension_candidates, date_candidates)
 
     st.markdown("### 数据质量体检")
-    c1, c2 = st.columns([1.05, 1.45])
+    c1, c2 = st.columns([1.15, 1.1])
     with c1:
         data_quality_issue_chart(clean_summary, quality_report, numeric_report)
     with c2:
-        numeric_validity_progress(numeric_report)
+        governance_action_center(clean_summary, numeric_report, quality_report, metric_candidates, dimension_candidates, date_candidates)
+
+    st.markdown("### 数值字段可解析性")
+    numeric_validity_progress(numeric_report)
 
     st.markdown("### 当前分析口径")
     config_df = pd.DataFrame({
@@ -3438,26 +3669,38 @@ with tab1:
             "、".join(selected_dimensions) if selected_dimensions else "无",
             "、".join(numeric_cols) if numeric_cols else "无",
             missing_strategy
+        ],
+        "用途说明": [
+            "用于经营表现、趋势、贡献度、风险诊断和问数分析",
+            "用于时间趋势、阶段变化和动态演示；无有效日期时系统转为结构分析",
+            "用于分组对比、贡献度分析、热力图和风险下钻",
+            "用于指标关系、异常识别和自然语言问数",
+            "用于明确系统对缺失值的处理口径"
         ]
     })
-    st.dataframe(config_df, use_container_width=True)
+    st.dataframe(config_df, use_container_width=True, hide_index=True)
 
-    st.markdown("### 明细查看")
-    with st.expander("查看字段语义识别表", expanded=False):
-        st.markdown('<div class="detail-expander-note">字段解释、推荐角色、聚合方式和注意事项都会在这里展示，适合需要核对字段口径时查看。</div>', unsafe_allow_html=True)
-        st.dataframe(meta, use_container_width=True, height=420)
+    st.markdown("### 字段资产清单")
+    st.markdown('<div class="detail-expander-note">下表展示字段含义解释、系统推荐角色和聚合口径。系统会区分规模型指标与水平型指标，使后续图表、问数和简报更符合经营管理语境。</div>', unsafe_allow_html=True)
+    st.dataframe(field_asset_table(meta, metric_candidates, dimension_candidates, date_candidates).head(20), use_container_width=True, height=420)
 
-    with st.expander("查看数据质量处理日志", expanded=False):
-        st.dataframe(quality_report, use_container_width=True)
-
-    with st.expander("查看数值转换检查", expanded=False):
-        st.dataframe(numeric_report, use_container_width=True)
+    st.markdown("### 明细追溯")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        with st.expander("查看完整字段语义识别表", expanded=False):
+            st.dataframe(meta, use_container_width=True, height=420)
+    with c2:
+        with st.expander("查看数据质量处理日志", expanded=False):
+            st.dataframe(quality_report, use_container_width=True)
+    with c3:
+        with st.expander("查看数值转换检查", expanded=False):
+            st.dataframe(numeric_report, use_container_width=True)
 
     with st.expander("查看图表可绘制性诊断", expanded=False):
-        st.markdown('<div class="detail-expander-note">如果某张图画不出来，优先看这里：有效数值数为 0 或唯一值过少时，系统会提示无法形成有效图形，而不是显示空白图。</div>', unsafe_allow_html=True)
+        st.markdown('<div class="detail-expander-note">如果某张图无法形成有效展示，优先查看这里。有效数值数为0或唯一值过少时，系统会提示原因，而不是显示空白图。</div>', unsafe_allow_html=True)
         st.dataframe(chart_data_diagnostic(df, main_metric, numeric_cols, selected_dimensions), use_container_width=True)
 
-    with st.expander("查看数据预览", expanded=False):
+    with st.expander("查看清洗后数据预览", expanded=False):
         st.dataframe(df.head(30), use_container_width=True)
 
 
@@ -3750,7 +3993,7 @@ with tab4:
         st.markdown("### Top 异常经营单元")
         st.markdown("""
         <div class="highlight-note">
-        表中金额、数量、利润等规模型指标按经营单元汇总；折扣、比率、单价、时长等水平型指标按平均值展示，避免出现“折扣相加”导致的口径失真。
+        系统根据字段业务属性自动匹配分析口径：金额、数量、利润等规模型指标采用汇总展示，折扣、比率、单价、时长等水平型指标采用平均水平展示，使结果更贴近经营管理语境。
         </div>
         """, unsafe_allow_html=True)
         top_anom = anomaly_df.sort_values("风险得分", ascending=False).head(10)
