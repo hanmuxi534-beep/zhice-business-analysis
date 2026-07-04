@@ -3470,6 +3470,7 @@ def management_status_summary(df, main_metric, anomaly_df, trend=None, selected_
 
 
 def dimension_treemap_chart(df, dim, metric, topn=20):
+    """结构地图：使用 go.Treemap，避免依赖 plotly.express。"""
     if not dim or dim not in df.columns or metric not in df.columns:
         return
     g = dimension_summary(df, dim, metric).head(topn).copy()
@@ -3479,18 +3480,25 @@ def dimension_treemap_chart(df, dim, metric, topn=20):
     if len(g) == 0:
         show_no_chart_reason(f"{dim}结构地图", "该维度下没有可用于结构地图的有效数值。")
         return
-    fig = px.treemap(
-        g,
-        path=[dim],
-        values=value_col,
-        color=value_col,
+
+    labels = g[dim].astype(str).tolist()
+    values = g[value_col].abs().astype(float).tolist()
+    custom_values = g[value_col].astype(float).tolist()
+
+    fig = go.Figure(go.Treemap(
+        labels=labels,
+        parents=[""] * len(labels),
+        values=values,
+        customdata=np.array(custom_values).reshape(-1, 1),
+        textinfo="label+value+percent root",
+        hovertemplate=f"{dim}=%{{label}}<br>{metric}=%{{customdata[0]:,.2f}}<br>占比=%{{percentRoot:.1%}}<extra></extra>"
+    ))
+    fig.update_layout(
         title=f"{dim}结构地图：{metric}贡献分布",
-        hover_data={value_col: ":,.2f"}
+        margin=dict(l=10, r=10, t=54, b=10)
     )
-    fig.update_traces(textinfo="label+value+percent parent")
     st.plotly_chart(chart_layout(fig, 520), use_container_width=True)
     st.caption("结构地图用于观察主指标是否集中在少数维度项上，面积越大表示贡献越高。")
-
 
 def contribution_waterfall_chart(comp, dim, metric, p0, p1):
     if comp is None or len(comp) == 0 or "变化额" not in comp.columns:
@@ -3517,6 +3525,7 @@ def contribution_waterfall_chart(comp, dim, metric, p0, p1):
 
 
 def risk_matrix_chart(anomaly_df, main_metric):
+    """风险矩阵：使用 go.Scatter，避免依赖 plotly.express。"""
     if anomaly_df is None or len(anomaly_df) == 0 or "风险得分" not in anomaly_df.columns or main_metric not in anomaly_df.columns:
         return
     plot = anomaly_df.copy()
@@ -3526,23 +3535,53 @@ def risk_matrix_chart(anomaly_df, main_metric):
     if len(plot) < 3:
         st.info("当前异常样本不足，暂不生成风险矩阵。")
         return
+
     plot["影响程度"] = plot[main_metric].abs().rank(pct=True) * 100
-    hover_cols = [c for c in plot.columns if c not in ["异常依据"]][:8]
-    fig = px.scatter(
-        plot,
-        x="影响程度",
-        y="风险得分",
-        color="风险等级" if "风险等级" in plot.columns else None,
-        size=main_metric,
-        hover_data=hover_cols,
-        title="风险矩阵：影响程度 × 异常程度"
-    )
+    if "风险等级" not in plot.columns:
+        plot["风险等级"] = "未分级"
+
+    # 控制气泡大小，避免极端值导致画面失衡
+    size_raw = plot[main_metric].abs().replace([np.inf, -np.inf], np.nan).fillna(0)
+    if size_raw.max() > size_raw.min():
+        sizes = 10 + (size_raw - size_raw.min()) / (size_raw.max() - size_raw.min()) * 34
+    else:
+        sizes = pd.Series([18] * len(plot), index=plot.index)
+
+    fig = go.Figure()
+    for level, sub in plot.groupby("风险等级", dropna=False):
+        idx = sub.index
+        hover_text = []
+        for _, r in sub.iterrows():
+            parts = [
+                f"风险等级={r.get('风险等级', '')}",
+                f"风险得分={r.get('风险得分', np.nan):.1f}",
+                f"影响程度={r.get('影响程度', np.nan):.1f}",
+                f"{main_metric}={money_fmt(r.get(main_metric, np.nan))}"
+            ]
+            if "异常依据" in r:
+                parts.append(f"异常依据={str(r.get('异常依据', ''))[:90]}")
+            hover_text.append("<br>".join(parts))
+        fig.add_trace(go.Scatter(
+            x=sub["影响程度"],
+            y=sub["风险得分"],
+            mode="markers",
+            name=str(level),
+            marker=dict(size=sizes.loc[idx], opacity=0.78, line=dict(width=1, color="white")),
+            text=hover_text,
+            hovertemplate="%{text}<extra></extra>"
+        ))
+
     fig.add_hline(y=70, line_dash="dash", line_color="#E67E22")
     fig.add_vline(x=70, line_dash="dash", line_color="#E67E22")
-    fig.update_layout(xaxis_title="影响程度（主指标分位）", yaxis_title="异常程度（风险得分）")
+    fig.update_layout(
+        title="风险矩阵：影响程度 × 异常程度",
+        xaxis_title="影响程度（主指标分位）",
+        yaxis_title="异常程度（风险得分）",
+        xaxis=dict(range=[0, 105]),
+        yaxis=dict(range=[0, 105])
+    )
     st.plotly_chart(chart_layout(fig, 520), use_container_width=True)
     st.caption("右上角代表同时具备较高影响程度和较高异常程度的经营单元，应优先进入复核清单。")
-
 
 def risk_source_summary_cards(anomaly_df):
     if anomaly_df is None or len(anomaly_df) == 0:
